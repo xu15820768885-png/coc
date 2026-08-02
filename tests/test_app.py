@@ -63,6 +63,7 @@ def test_import_and_list(module):
     response = client.post("/api/v1/import", json=payload())
     assert response.status_code == 201
     assert response.json["imported"] == 1
+    assert response.json["upgrades"][0]["name"] == "大本营"
 
     data = client.get("/api/v1/villages").json
     assert data["villages"][0]["name"] == "测试村庄"
@@ -93,6 +94,40 @@ def test_due_upgrade_sends_once(module, monkeypatch):
     assert module.process_due_upgrades() == 1
     assert module.process_due_upgrades() == 0
     assert "大本营 Lv14→15" in sent[0]
+
+
+def test_sends_one_hour_half_hour_and_completion(module, monkeypatch):
+    client = module.app.test_client()
+    client.post("/api/v1/import", json=payload(7200))
+    upgrade = client.get("/api/v1/villages").json["villages"][0]["upgrades"][0]
+    end = module.parse_time(upgrade["ends_at"])
+    clock = [end - timedelta(hours=1)]
+    sent = []
+    monkeypatch.setattr(module, "now_utc", lambda: clock[0])
+    monkeypatch.setattr(
+        module.WeComNotifier, "configured", property(lambda self: True)
+    )
+    monkeypatch.setattr(
+        module.notifier,
+        "send_text",
+        lambda message: sent.append(message) or {"errcode": 0},
+    )
+
+    assert module.process_due_upgrades() == 1
+    assert "还有 1 小时" in sent[-1]
+    assert "北京时间" in sent[-1]
+    assert module.process_due_upgrades() == 0
+
+    clock[0] = end - timedelta(minutes=30)
+    assert module.process_due_upgrades() == 1
+    assert "还有 30 分钟" in sent[-1]
+    assert module.process_due_upgrades() == 0
+
+    clock[0] = end
+    assert module.process_due_upgrades() == 1
+    assert "升级完成" in sent[-1]
+    assert "北京时间" in sent[-1]
+    assert module.process_due_upgrades() == 0
 
 
 def test_invalid_payload(module):
@@ -227,9 +262,9 @@ def test_session_secret_is_generated_and_persisted(module):
     assert module.load_session_secret() == first_secret
 
 
-def test_scheduler_waits_until_exact_upgrade_time(module, monkeypatch):
+def test_scheduler_waits_until_exact_reminder_time(module, monkeypatch):
     client = module.app.test_client()
-    client.post("/api/v1/import", json=payload(3600))
+    client.post("/api/v1/import", json=payload(7200))
     monkeypatch.setattr(module.WeComNotifier, "configured", property(lambda self: True))
 
     delay = module.seconds_until_next_upgrade()
@@ -346,9 +381,13 @@ def test_wecom_callback_verification_and_text_json_import(module, monkeypatch):
     )
     assert callback.status_code == 200
     assert client.get("/api/v1/villages").json["villages"][0]["id"] == "v1"
-    assert replies[0][0] == "zhangsan"
-    assert "导入成功" in replies[0][1]
+    import_reply = next(reply for reply in replies if reply[0] == "zhangsan")
+    assert "导入成功" in import_reply[1]
+    assert "1. 大本营 Lv14→15" in import_reply[1]
+    assert "剩余" in import_reply[1]
+    assert "北京时间" in import_reply[1]
 
+    reply_count = len(replies)
     duplicate = client.post(
         "/api/v1/wecom/callback",
         query_string={
@@ -360,7 +399,7 @@ def test_wecom_callback_verification_and_text_json_import(module, monkeypatch):
         content_type="application/xml",
     )
     assert duplicate.status_code == 200
-    assert len(replies) == 1
+    assert len(replies) == reply_count
 
     monkeypatch.setattr(
         module.notifier,

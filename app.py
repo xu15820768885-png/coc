@@ -116,6 +116,8 @@ def init_db():
               started_at TEXT,
               ends_at TEXT NOT NULL,
               status TEXT NOT NULL DEFAULT 'upgrading',
+              one_hour_notified_at TEXT,
+              half_hour_notified_at TEXT,
               notified_at TEXT,
               created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL,
@@ -135,6 +137,17 @@ def init_db():
             );
             """
         )
+        upgrade_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(upgrades)")
+        }
+        if "one_hour_notified_at" not in upgrade_columns:
+            conn.execute(
+                "ALTER TABLE upgrades ADD COLUMN one_hour_notified_at TEXT"
+            )
+        if "half_hour_notified_at" not in upgrade_columns:
+            conn.execute(
+                "ALTER TABLE upgrades ADD COLUMN half_hour_notified_at TEXT"
+            )
 
 
 def require_access():
@@ -361,7 +374,11 @@ scheduler_wakeup = threading.Event()
 
 
 def completion_message(upgrade):
-    finished = parse_time(upgrade["ends_at"]).astimezone(APP_TZ).strftime("%Y-%m-%d %H:%M")
+    finished = (
+        parse_time(upgrade["ends_at"])
+        .astimezone(APP_TZ)
+        .strftime("%Y-%m-%d %H:%M:%S")
+    )
     level = (
         f" Lv{upgrade['level_from']}→{upgrade['level_to']}"
         if upgrade["level_from"] is not None and upgrade["level_to"] is not None
@@ -373,37 +390,158 @@ def completion_message(upgrade):
         f"村庄：{upgrade['village_name']}{tag}\n"
         f"项目：{upgrade['name']}{level}\n"
         f"分类：{upgrade['category']}\n"
-        f"完成时间：{finished}"
+        f"完成时间（北京时间）：{finished}"
     )
+
+
+def advance_message(upgrade, minutes):
+    finished = (
+        parse_time(upgrade["ends_at"])
+        .astimezone(APP_TZ)
+        .strftime("%Y-%m-%d %H:%M:%S")
+    )
+    level = (
+        f" Lv{upgrade['level_from']}→{upgrade['level_to']}"
+        if upgrade["level_from"] is not None and upgrade["level_to"] is not None
+        else ""
+    )
+    tag = f"（{upgrade['player_tag']}）" if upgrade["player_tag"] else ""
+    lead = "1 小时" if minutes == 60 else "30 分钟"
+    return (
+        f"⏰ 距离升级完成还有 {lead}\n"
+        f"村庄：{upgrade['village_name']}{tag}\n"
+        f"项目：{upgrade['name']}{level}\n"
+        f"分类：{upgrade['category']}\n"
+        f"预计完成（北京时间）：{finished}"
+    )
+
+
+def compact_duration(seconds):
+    seconds = max(0, int(seconds))
+    if seconds < 60:
+        return "不足1分钟"
+    minutes = seconds // 60
+    days, minutes = divmod(minutes, 24 * 60)
+    hours, minutes = divmod(minutes, 60)
+    parts = []
+    if days:
+        parts.append(f"{days}天")
+    if hours:
+        parts.append(f"{hours}小时")
+    if minutes and len(parts) < 2:
+        parts.append(f"{minutes}分钟")
+    return "".join(parts[:2])
+
+
+def import_result_message(result):
+    village = result["village_name"]
+    tag = result.get("player_tag", "")
+    if tag and tag not in village:
+        village = f"{village}（{tag}）"
+    lines = [
+        "✅ 村庄 JSON 导入成功",
+        f"村庄：{village}",
+        f"进行中项目：{result['imported']} 个",
+    ]
+    for index, upgrade in enumerate(result.get("upgrades", []), start=1):
+        level = (
+            f" Lv{upgrade['level_from']}→{upgrade['level_to']}"
+            if upgrade["level_from"] is not None
+            and upgrade["level_to"] is not None
+            else ""
+        )
+        end = parse_time(upgrade["ends_at"])
+        finished = end.astimezone(APP_TZ).strftime("%Y-%m-%d %H:%M:%S")
+        remaining = compact_duration((end - now_utc()).total_seconds())
+        lines.extend(
+            [
+                f"{index}. {upgrade['name']}{level}",
+                f"   剩余 {remaining}｜北京时间 {finished}",
+            ]
+        )
+    lines.append("完成前 1 小时、30 分钟和完成时会自动通知。")
+    return "\n".join(lines)
 
 
 def process_due_upgrades():
     if not notifier.configured:
         return 0
-    current = iso_utc(now_utc())
+    current_time = now_utc()
+    current = iso_utc(current_time)
     with get_db() as conn:
         rows = conn.execute(
             """
             SELECT u.*, v.name AS village_name, v.player_tag
             FROM upgrades u JOIN villages v ON v.id = u.village_id
-            WHERE u.status = 'upgrading' AND u.notified_at IS NULL AND u.ends_at <= ?
+            WHERE u.status = 'upgrading' AND u.notified_at IS NULL
             ORDER BY u.ends_at
-            """,
-            (current,),
+            """
         ).fetchall()
     sent = 0
     for row in rows:
+        end = parse_time(row["ends_at"])
+        if end <= current_time:
+            stage = "completed"
+        elif (
+            end <= current_time + timedelta(minutes=30)
+            and row["half_hour_notified_at"] is None
+        ):
+            stage = "half_hour"
+        elif (
+            end <= current_time + timedelta(hours=1)
+            and row["one_hour_notified_at"] is None
+        ):
+            stage = "one_hour"
+        else:
+            continue
         try:
-            notifier.send_text(completion_message(row))
+            if stage == "completed":
+                message = completion_message(row)
+            elif stage == "half_hour":
+                message = advance_message(row, 30)
+            else:
+                message = advance_message(row, 60)
+            notifier.send_text(message)
             with get_db() as conn:
-                conn.execute(
-                    "UPDATE upgrades SET status='completed', notified_at=?, updated_at=? "
-                    "WHERE id=? AND notified_at IS NULL",
-                    (current, current, row["id"]),
-                )
+                if stage == "completed":
+                    conn.execute(
+                        """
+                        UPDATE upgrades
+                        SET status='completed', one_hour_notified_at=COALESCE(
+                              one_hour_notified_at, ?
+                            ),
+                            half_hour_notified_at=COALESCE(
+                              half_hour_notified_at, ?
+                            ),
+                            notified_at=?, updated_at=?
+                        WHERE id=? AND notified_at IS NULL
+                        """,
+                        (current, current, current, current, row["id"]),
+                    )
+                elif stage == "half_hour":
+                    conn.execute(
+                        """
+                        UPDATE upgrades
+                        SET one_hour_notified_at=COALESCE(
+                              one_hour_notified_at, ?
+                            ),
+                            half_hour_notified_at=?, updated_at=?
+                        WHERE id=? AND half_hour_notified_at IS NULL
+                        """,
+                        (current, current, current, row["id"]),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        UPDATE upgrades
+                        SET one_hour_notified_at=?, updated_at=?
+                        WHERE id=? AND one_hour_notified_at IS NULL
+                        """,
+                        (current, current, row["id"]),
+                    )
             sent += 1
         except Exception:
-            app.logger.exception("发送升级完成通知失败：%s", row["id"])
+            app.logger.exception("发送升级提醒失败：%s %s", row["id"], stage)
     return sent
 
 
@@ -411,16 +549,25 @@ def seconds_until_next_upgrade():
     if not notifier.configured:
         return None
     with get_db() as conn:
-        row = conn.execute(
+        rows = conn.execute(
             """
-            SELECT MIN(ends_at) AS next_ends_at
+            SELECT ends_at, one_hour_notified_at, half_hour_notified_at
             FROM upgrades
             WHERE status = 'upgrading' AND notified_at IS NULL
             """
-        ).fetchone()
-    if not row or not row["next_ends_at"]:
+        ).fetchall()
+    if not rows:
         return None
-    delay = (parse_time(row["next_ends_at"]) - now_utc()).total_seconds()
+    deadlines = []
+    for row in rows:
+        end = parse_time(row["ends_at"])
+        if row["one_hour_notified_at"] is None:
+            deadlines.append(end - timedelta(hours=1))
+        elif row["half_hour_notified_at"] is None:
+            deadlines.append(end - timedelta(minutes=30))
+        else:
+            deadlines.append(end)
+    delay = (min(deadlines) - now_utc()).total_seconds()
     # Past-due means the previous send failed. Back off before retrying.
     return delay if delay > 0 else RETRY_INTERVAL
 
@@ -634,6 +781,7 @@ def save_import_payload(body):
     village_id = str(village.get("id") or village.get("player_tag") or uuid.uuid4())
     imported = 0
     imported_ids = []
+    imported_upgrades = []
     current = now_utc()
     current_iso = iso_utc(current)
     with get_db() as conn:
@@ -666,13 +814,22 @@ def save_import_payload(body):
                 """
                 INSERT INTO upgrades(
                   id, village_id, name, category, level_from, level_to,
-                  started_at, ends_at, status, notified_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                  started_at, ends_at, status, one_hour_notified_at,
+                  half_hour_notified_at, notified_at, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                   village_id=excluded.village_id, name=excluded.name,
                   category=excluded.category, level_from=excluded.level_from,
                   level_to=excluded.level_to, started_at=excluded.started_at,
                   ends_at=excluded.ends_at, status=excluded.status,
+                  one_hour_notified_at=CASE
+                    WHEN upgrades.ends_at != excluded.ends_at THEN NULL
+                    ELSE upgrades.one_hour_notified_at
+                  END,
+                  half_hour_notified_at=CASE
+                    WHEN upgrades.ends_at != excluded.ends_at THEN NULL
+                    ELSE upgrades.half_hour_notified_at
+                  END,
                   notified_at=CASE
                     WHEN upgrades.ends_at != excluded.ends_at THEN NULL
                     ELSE upgrades.notified_at
@@ -695,6 +852,14 @@ def save_import_payload(body):
             )
             imported += 1
             imported_ids.append(item_id)
+            imported_upgrades.append(
+                {
+                    "name": str(item["name"]),
+                    "level_from": item.get("level_from"),
+                    "level_to": item.get("level_to"),
+                    "ends_at": iso_utc(end),
+                }
+            )
         if input_format == "game_export":
             parameters = [current_iso, current_iso, village_id, f"{village_id}:%"]
             missing_clause = ""
@@ -719,7 +884,10 @@ def save_import_payload(body):
     return {
         "ok": True,
         "village_id": village_id,
+        "village_name": str(village["name"]),
+        "player_tag": str(village.get("player_tag", "")),
         "imported": imported,
+        "upgrades": sorted(imported_upgrades, key=lambda item: item["ends_at"]),
         "format": input_format,
         "notifications_sent": sent,
     }
@@ -768,10 +936,7 @@ def process_wecom_incoming_message(message):
         result = save_import_payload(payload)
         send_wecom_import_result(
             from_user,
-            "✅ 村庄 JSON 导入成功\n"
-            f"村庄：{result['village_id']}\n"
-            f"进行中项目：{result['imported']} 个\n"
-            "升级完成后会自动通知。",
+            import_result_message(result),
         )
     except Exception as exc:
         app.logger.exception("处理企业微信村庄 JSON 失败")

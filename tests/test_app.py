@@ -278,6 +278,13 @@ def test_wecom_callback_verification_and_text_json_import(module, monkeypatch):
         == "https://coc.weige1999.xin/api/v1/wecom/callback"
     )
 
+    monkeypatch.setattr(module, "PUBLIC_BASE_URL", "https://public.example.com")
+    settings = client.get("/api/v1/settings/wecom").json["settings"]
+    assert (
+        settings["callback_url"]
+        == "https://public.example.com/api/v1/wecom/callback"
+    )
+
     timestamp = "1785650000"
     nonce = "123456"
     encrypted_echo = encrypt_wecom_message(aes_key, corp_id, "verified-echo")

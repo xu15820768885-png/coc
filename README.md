@@ -12,7 +12,7 @@
                                                        └──> 企业微信 API ──> 手机通知
 ```
 
-这是单向主动通知，不接收企业微信消息，因此不需要设置企业微信的回调 URL、Token 或 EncodingAESKey。
+既支持到点主动通知，也支持接收企业微信消息。配置加密回调后，可以在企业微信里直接向 COC 自建应用发送完整的村庄 JSON 文本。
 
 ## NAS 部署
 
@@ -25,6 +25,7 @@
 部署前必须修改 `ADMIN_PASSWORD`，不能保留示例值：
 
 - `ADMIN_PASSWORD`：网页后台登录密码；
+- `PUBLIC_BASE_URL`：对外 HTTPS 地址，用于生成企业微信回调 URL；本项目填写 `https://coc.weige1999.xin`。
 
 `ADMIN_USERNAME` 默认为 `admin`，也可以修改。登录会话密钥会由程序首次启动时自动生成并保存在 `/data/.session-secret`，无需手工设置。`API_KEY` 也是可选项，只有其他程序需要自动调用接口提交 JSON 时才添加；登录后台后粘贴 JSON 不需要它。
 

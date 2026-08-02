@@ -8,6 +8,7 @@ services:
       PORT: "8080"
       ADMIN_USERNAME: "admin"
       ADMIN_PASSWORD: "change-this-admin-password"
+      PUBLIC_BASE_URL: "https://coc.weige1999.xin"
     ports:
       - "802:8080"
     volumes:

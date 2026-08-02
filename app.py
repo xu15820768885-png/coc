@@ -36,6 +36,7 @@ API_KEY = os.getenv("API_KEY", "").strip()
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin").strip()
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "change-me")
 AUTH_DISABLED = os.getenv("DISABLE_AUTH", "0") == "1"
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
 
 
 def load_session_secret():
@@ -523,7 +524,11 @@ def get_wecom_settings():
                 "api_base": notifier.base_url,
                 "outbound_proxy": notifier.proxy_url,
                 "configured": notifier.configured,
-                "callback_url": url_for("wecom_callback", _external=True),
+                "callback_url": (
+                    f"{PUBLIC_BASE_URL}/api/v1/wecom/callback"
+                    if PUBLIC_BASE_URL
+                    else url_for("wecom_callback", _external=True)
+                ),
                 "callback_token": "••••••••" if callback_token_set else "",
                 "callback_token_set": callback_token_set,
                 "callback_aes_key": "••••••••" if callback_aes_key_set else "",

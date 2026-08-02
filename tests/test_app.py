@@ -97,7 +97,7 @@ def test_due_upgrade_sends_once(module, monkeypatch):
     assert "等级：Lv14 → Lv15" in sent[0]
 
 
-def test_sends_one_hour_half_hour_and_completion(module, monkeypatch):
+def test_only_sends_at_completion(module, monkeypatch):
     client = module.app.test_client()
     client.post("/api/v1/import", json=payload(7200))
     upgrade = client.get("/api/v1/villages").json["villages"][0]["upgrades"][0]
@@ -118,18 +118,15 @@ def test_sends_one_hour_half_hour_and_completion(module, monkeypatch):
     assert sent == []
 
     clock[0] = end - timedelta(minutes=30)
-    assert module.process_due_upgrades() == 1
-    assert "建筑即将升级完成" in sent[-1]
-    assert "剩余时间：30分钟" in sent[-1]
-    assert "村庄：测试村庄" in sent[-1]
-    assert "建筑：大本营" in sent[-1]
-    assert "等级：Lv14 → Lv15" in sent[-1]
-    assert "（北京时间）" in sent[-1]
     assert module.process_due_upgrades() == 0
+    assert sent == []
 
     clock[0] = end
     assert module.process_due_upgrades() == 1
     assert "✅ 建筑升级完成" in sent[-1]
+    assert "村庄：测试村庄" in sent[-1]
+    assert "建筑：大本营" in sent[-1]
+    assert "等级：Lv14 → Lv15" in sent[-1]
     assert "完成时间：" in sent[-1]
     assert "（北京时间）" in sent[-1]
     assert module.process_due_upgrades() == 0
@@ -358,7 +355,7 @@ def test_scheduler_waits_until_exact_reminder_time(module, monkeypatch):
     monkeypatch.setattr(module.WeComNotifier, "configured", property(lambda self: True))
 
     delay = module.seconds_until_next_upgrade()
-    assert 5300 <= delay <= 5400
+    assert 7100 <= delay <= 7200
 
     with module.get_db() as conn:
         conn.execute(

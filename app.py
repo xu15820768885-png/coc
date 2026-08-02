@@ -501,27 +501,6 @@ def completion_message(upgrade):
     )
 
 
-def advance_message(upgrade, minutes):
-    finished = (
-        parse_time(upgrade["ends_at"])
-        .astimezone(APP_TZ)
-        .strftime("%Y-%m-%d %H:%M:%S")
-    )
-    level = (
-        f"Lv{upgrade['level_from']} → Lv{upgrade['level_to']}"
-        if upgrade["level_from"] is not None and upgrade["level_to"] is not None
-        else "未知"
-    )
-    return (
-        "⏰ 建筑即将升级完成\n\n"
-        f"村庄：{upgrade['village_name']}\n"
-        f"建筑：{upgrade['name']}\n"
-        f"等级：{level}\n"
-        f"预计完成：{finished}（北京时间）\n"
-        f"剩余时间：{minutes}分钟"
-    )
-
-
 def compact_duration(seconds):
     seconds = max(0, int(seconds))
     if seconds < 60:
@@ -686,52 +665,22 @@ def process_due_upgrades():
     sent = 0
     for row in rows:
         end = parse_time(row["ends_at"])
-        if end <= current_time:
-            stage = "completed"
-        elif (
-            end <= current_time + timedelta(minutes=30)
-            and row["half_hour_notified_at"] is None
-        ):
-            stage = "half_hour"
-        else:
+        if end > current_time:
             continue
         try:
-            if stage == "completed":
-                message = completion_message(row)
-            elif stage == "half_hour":
-                message = advance_message(row, 30)
-            notifier.send_text(message)
+            notifier.send_text(completion_message(row))
             with get_db() as conn:
-                if stage == "completed":
-                    conn.execute(
-                        """
-                        UPDATE upgrades
-                        SET status='completed', one_hour_notified_at=COALESCE(
-                              one_hour_notified_at, ?
-                            ),
-                            half_hour_notified_at=COALESCE(
-                              half_hour_notified_at, ?
-                            ),
-                            notified_at=?, updated_at=?
-                        WHERE id=? AND notified_at IS NULL
-                        """,
-                        (current, current, current, current, row["id"]),
-                    )
-                elif stage == "half_hour":
-                    conn.execute(
-                        """
-                        UPDATE upgrades
-                        SET one_hour_notified_at=COALESCE(
-                              one_hour_notified_at, ?
-                            ),
-                            half_hour_notified_at=?, updated_at=?
-                        WHERE id=? AND half_hour_notified_at IS NULL
-                        """,
-                        (current, current, current, row["id"]),
-                    )
+                conn.execute(
+                    """
+                    UPDATE upgrades
+                    SET status='completed', notified_at=?, updated_at=?
+                    WHERE id=? AND notified_at IS NULL
+                    """,
+                    (current, current, row["id"]),
+                )
             sent += 1
         except Exception:
-            app.logger.exception("发送升级提醒失败：%s %s", row["id"], stage)
+            app.logger.exception("发送升级完成提醒失败：%s", row["id"])
     return sent
 
 
@@ -741,20 +690,14 @@ def seconds_until_next_upgrade():
     with get_db() as conn:
         rows = conn.execute(
             """
-            SELECT ends_at, half_hour_notified_at
+            SELECT ends_at
             FROM upgrades
             WHERE status = 'upgrading' AND notified_at IS NULL
             """
         ).fetchall()
     if not rows:
         return None
-    deadlines = []
-    for row in rows:
-        end = parse_time(row["ends_at"])
-        if row["half_hour_notified_at"] is None:
-            deadlines.append(end - timedelta(minutes=30))
-        else:
-            deadlines.append(end)
+    deadlines = [parse_time(row["ends_at"]) for row in rows]
     delay = (min(deadlines) - now_utc()).total_seconds()
     # Past-due means the previous send failed. Back off before retrying.
     return delay if delay > 0 else RETRY_INTERVAL

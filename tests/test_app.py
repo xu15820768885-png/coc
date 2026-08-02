@@ -191,3 +191,11 @@ def test_admin_login_and_api_key_access(module):
         headers={"X-API-Key": "api-key-test"},
     )
     assert imported.status_code == 201
+
+
+def test_session_secret_is_generated_and_persisted(module):
+    secret_path = module.DB_PATH.parent / ".session-secret"
+    assert secret_path.exists()
+    first_secret = secret_path.read_text().strip()
+    assert len(first_secret) >= 48
+    assert module.load_session_secret() == first_secret

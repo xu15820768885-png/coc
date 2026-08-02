@@ -23,9 +23,28 @@ ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin").strip()
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "change-me")
 AUTH_DISABLED = os.getenv("DISABLE_AUTH", "0") == "1"
 
+
+def load_session_secret():
+    configured = os.getenv("SESSION_SECRET", "").strip()
+    if configured:
+        return configured
+    secret_path = Path(
+        os.getenv("SESSION_SECRET_FILE", str(DB_PATH.parent / ".session-secret"))
+    )
+    secret_path.parent.mkdir(parents=True, exist_ok=True)
+    if secret_path.exists():
+        saved = secret_path.read_text(encoding="utf-8").strip()
+        if saved:
+            return saved
+    generated = secrets.token_urlsafe(48)
+    secret_path.write_text(generated, encoding="utf-8")
+    secret_path.chmod(0o600)
+    return generated
+
+
 app = Flask(__name__)
 app.json.ensure_ascii = False
-app.secret_key = os.getenv("SESSION_SECRET", "change-this-session-secret")
+app.secret_key = load_session_secret()
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",

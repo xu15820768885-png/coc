@@ -8,8 +8,6 @@ services:
       PORT: "8080"
       ADMIN_USERNAME: "admin"
       ADMIN_PASSWORD: "change-this-admin-password"
-      SESSION_SECRET: "change-this-to-another-long-random-string"
-      API_KEY: "change-this-to-a-long-random-password"
       CHECK_INTERVAL_SECONDS: 30
     ports:
       - "802:8080"

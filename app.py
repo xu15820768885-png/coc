@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 import requests
 from Crypto.Cipher import AES
 from flask import Flask, Response, jsonify, redirect, render_template, request, session, url_for
-from game_data import EXPORT_SECTIONS, item_name
+from game_data import EXPORT_SECTIONS, crafted_module_name, item_name
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 
@@ -234,7 +234,49 @@ def normalize_import(body):
         if not isinstance(entries, list):
             continue
         for entry in entries:
-            if not isinstance(entry, dict) or entry.get("timer") is None:
+            if not isinstance(entry, dict):
+                continue
+            if section == "buildings":
+                for crafted in entry.get("types", []):
+                    if not isinstance(crafted, dict):
+                        continue
+                    defense_id = int(crafted.get("data", 0))
+                    for module_index, module in enumerate(
+                        crafted.get("modules", []), start=1
+                    ):
+                        if (
+                            not isinstance(module, dict)
+                            or module.get("timer") is None
+                        ):
+                            continue
+                        module_id = int(module.get("data", 0))
+                        remaining = int(module["timer"])
+                        if remaining < 0:
+                            continue
+                        level = module.get("lvl")
+                        upgrades.append(
+                            {
+                                "id": (
+                                    f"{tag}:crafted:{defense_id}:{module_id}"
+                                ),
+                                "name": crafted_module_name(
+                                    defense_id, module_index
+                                ),
+                                "category": "精工防御",
+                                "level_from": level,
+                                "level_to": (
+                                    int(level) + 1
+                                    if level is not None
+                                    else None
+                                ),
+                                "started_at": iso_utc(source_time),
+                                "ends_at": iso_utc(
+                                    source_time
+                                    + timedelta(seconds=remaining)
+                                ),
+                            }
+                        )
+            if entry.get("timer") is None:
                 continue
             data_id = int(entry.get("data"))
             remaining = int(entry["timer"])

@@ -149,6 +149,12 @@ NAMES_ZH = {
     73000017: "贪婪渡鸦",
 }
 
+CRAFTED_DEFENSE_NAMES = {
+    103000011: "热蜡烛",
+    103000012: "英雄猎手",
+    103000013: "蛋糕投石器",
+}
+
 
 EXPORT_SECTIONS = {
     "buildings": "建筑",
@@ -168,3 +174,10 @@ EXPORT_SECTIONS = {
 
 def item_name(data_id, category):
     return NAMES_ZH.get(data_id, f"{category} #{data_id}")
+
+
+def crafted_module_name(defense_id, module_index):
+    defense_name = CRAFTED_DEFENSE_NAMES.get(
+        defense_id, f"精工防御 #{defense_id}"
+    )
+    return f"{defense_name}·模组{module_index}"

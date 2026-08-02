@@ -185,6 +185,68 @@ def test_raw_game_export(module):
     ]
 
 
+def test_raw_game_export_includes_crafted_defense_module_timers(module):
+    raw = {
+        "tag": "#CRAFTED",
+        "timestamp": 1785660674,
+        "buildings": [
+            {
+                "data": 1000097,
+                "types": [
+                    {
+                        "data": 103000011,
+                        "modules": [
+                            {"data": 102000033, "lvl": 3},
+                            {"data": 102000034, "lvl": 1},
+                            {
+                                "data": 102000035,
+                                "lvl": 4,
+                                "timer": 20505,
+                            },
+                        ],
+                    },
+                    {
+                        "data": 103000012,
+                        "modules": [
+                            {
+                                "data": 102000036,
+                                "lvl": 4,
+                                "timer": 702,
+                            }
+                        ],
+                    },
+                        {
+                            "data": 103000013,
+                            "modules": [
+                                {"data": 102000039, "lvl": 3},
+                                {"data": 102000040, "lvl": 4},
+                                {
+                                    "data": 102000041,
+                                "lvl": 1,
+                                "timer": 23332,
+                            }
+                        ],
+                    },
+                ],
+            }
+        ],
+    }
+    response = module.app.test_client().post("/api/v1/import", json=raw)
+    assert response.status_code == 201
+    assert response.json["imported"] == 3
+    assert [item["name"] for item in response.json["upgrades"]] == [
+        "英雄猎手·模组1",
+        "热蜡烛·模组3",
+        "蛋糕投石器·模组3",
+    ]
+    assert all(
+        item["category"] == "精工防御"
+        for item in module.app.test_client()
+        .get("/api/v1/villages")
+        .json["villages"][0]["upgrades"]
+    )
+
+
 def test_new_raw_snapshot_makes_missing_upgrade_due(module):
     client = module.app.test_client()
     first = {

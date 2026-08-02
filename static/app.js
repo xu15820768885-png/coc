@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const icons = { 建筑: "🏰", 英雄: "👑", 军队: "⚔️", 法术: "🧪", 陷阱: "💣", 宠物: "🐾", 其他: "🔨" };
+const icons = { 建筑: "🏰", 精工防御: "⚙️", 英雄: "👑", 军队: "⚔️", 法术: "🧪", 陷阱: "💣", 宠物: "🐾", 其他: "🔨" };
 
 const example = {
   village: { id: "home-1", name: "我的家乡", player_tag: "#ABC123" },

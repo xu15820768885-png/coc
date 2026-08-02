@@ -1,20 +1,29 @@
 services:
   coc-reminder:
-    build: .
-    image: coc-reminder:latest
+    image: ghcr.mirrorify.net/xu15820768885-png/coc:latest
     container_name: coc-reminder
-    restart: unless-stopped
-    ports:
-      - "802:8080"
     environment:
       TZ: Asia/Shanghai
-      API_KEY: ${API_KEY:-}
-      WECOM_CORP_ID: ${WECOM_CORP_ID}
-      WECOM_AGENT_ID: ${WECOM_AGENT_ID}
-      WECOM_SECRET: ${WECOM_SECRET}
-      WECOM_TO_USER: ${WECOM_TO_USER:-@all}
-      WECOM_API_BASE: ${WECOM_API_BASE:-https://qyapi.weixin.qq.com}
-      OUTBOUND_PROXY: ${OUTBOUND_PROXY:-}
+      DATA_DIR: /data
+      PORT: "8080"
+      API_KEY: "change-this-to-a-long-random-password"
+      HTTP_PROXY: http://192.168.31.129:7890
+      HTTPS_PROXY: http://192.168.31.129:7890
+      NO_PROXY: localhost,127.0.0.1,192.168.31.0/24
+      OUTBOUND_PROXY: http://192.168.31.129:7890
       CHECK_INTERVAL_SECONDS: 30
+    ports:
+      - "802:8080"
     volumes:
-      - ./data:/data
+      - /volume1/docker/coc/data:/data
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=5)"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s

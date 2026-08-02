@@ -14,23 +14,23 @@
 
 ## NAS 部署
 
-1. 复制配置：
+在绿联 NAS 的 Docker“项目”中创建项目，把仓库内的 `docker-compose.yml` 整段粘贴进去即可。默认配置为：
 
-   ```bash
-   cp .env.example .env
-   ```
+- 镜像：`ghcr.mirrorify.net/xu15820768885-png/coc:latest`
+- 访问端口：`802`
+- 数据目录：`/volume1/docker/coc/data`
+- HTTP 代理：`http://192.168.31.129:7890`
 
-2. 编辑 `.env`。强烈建议设置 `API_KEY`，防止公网接口和后台设置被他人修改。企业微信参数可以留空，启动后在网页后台填写：
+部署前必须修改 `API_KEY` 为随机长密码。如果 NAS 的共享文件夹路径或代理地址不同，也要一并修改。没有 HTTP 代理时，删除 `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` 和 `OUTBOUND_PROXY` 四行。
 
-   - `API_KEY`：建议设置一个随机长密码，防止公网接口被他人写入
+命令行部署也可以直接执行：
 
-3. 启动：
+```bash
+docker compose pull
+docker compose up -d
+```
 
-   ```bash
-   docker compose up -d --build
-   ```
-
-4. 浏览器打开 `http://NAS-IP:802`，在“企业微信通知”中填写 CorpID、AgentID、Secret 和接收成员，然后点击“发送测试通知”。
+浏览器打开 `http://NAS-IP:802`，输入 Compose 中设置的 API Key，然后在“企业微信通知”中填写 CorpID、AgentID、Secret 和接收成员，最后点击“发送测试通知”。
 
 网页中保存的通知配置和村庄数据都持久化在项目的 `data/` 目录，更新或重建容器不会丢失。`.env` 中的企业微信参数仍然可作为初始默认值；网页保存的设置优先。
 

@@ -8,7 +8,6 @@ services:
       PORT: "8080"
       ADMIN_USERNAME: "admin"
       ADMIN_PASSWORD: "change-this-admin-password"
-      CHECK_INTERVAL_SECONDS: 30
     ports:
       - "802:8080"
     volumes:

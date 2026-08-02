@@ -17,7 +17,15 @@ from game_data import EXPORT_SECTIONS, item_name
 APP_TZ = ZoneInfo(os.getenv("TZ", "Asia/Shanghai"))
 DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
 DB_PATH = Path(os.getenv("DB_PATH", str(DATA_DIR / "coc-reminder.db")))
-CHECK_INTERVAL = max(5, int(os.getenv("CHECK_INTERVAL_SECONDS", "30")))
+RETRY_INTERVAL = max(
+    5,
+    int(
+        os.getenv(
+            "NOTIFICATION_RETRY_SECONDS",
+            os.getenv("CHECK_INTERVAL_SECONDS", "30"),
+        )
+    ),
+)
 API_KEY = os.getenv("API_KEY", "").strip()
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin").strip()
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "change-me")
@@ -280,6 +288,7 @@ class WeComNotifier:
 
 
 notifier = WeComNotifier()
+scheduler_wakeup = threading.Event()
 
 
 def completion_message(upgrade):
@@ -329,13 +338,34 @@ def process_due_upgrades():
     return sent
 
 
+def seconds_until_next_upgrade():
+    if not notifier.configured:
+        return None
+    with get_db() as conn:
+        row = conn.execute(
+            """
+            SELECT MIN(ends_at) AS next_ends_at
+            FROM upgrades
+            WHERE status = 'upgrading' AND notified_at IS NULL
+            """
+        ).fetchone()
+    if not row or not row["next_ends_at"]:
+        return None
+    delay = (parse_time(row["next_ends_at"]) - now_utc()).total_seconds()
+    # Past-due means the previous send failed. Back off before retrying.
+    return delay if delay > 0 else RETRY_INTERVAL
+
+
 def scheduler_loop():
     while True:
         try:
             process_due_upgrades()
+            delay = seconds_until_next_upgrade()
         except Exception:
             app.logger.exception("提醒轮询失败")
-        time.sleep(CHECK_INTERVAL)
+            delay = RETRY_INTERVAL
+        scheduler_wakeup.wait(timeout=delay)
+        scheduler_wakeup.clear()
 
 
 @app.get("/")
@@ -468,6 +498,7 @@ def update_wecom_settings():
             [(key, value, updated_at) for key, value in values.items()],
         )
     notifier.refresh()
+    scheduler_wakeup.set()
     return jsonify({"ok": True, "configured": notifier.configured})
 
 
@@ -580,6 +611,7 @@ def import_village():
     except (ValueError, TypeError, OverflowError) as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     sent = process_due_upgrades()
+    scheduler_wakeup.set()
     return jsonify(
         {
             "ok": True,
@@ -600,6 +632,7 @@ def delete_upgrade(upgrade_id):
         cursor = conn.execute("DELETE FROM upgrades WHERE id=?", (upgrade_id,))
     if not cursor.rowcount:
         return jsonify({"ok": False, "error": "升级项目不存在"}), 404
+    scheduler_wakeup.set()
     return jsonify({"ok": True})
 
 

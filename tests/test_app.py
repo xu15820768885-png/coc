@@ -199,3 +199,23 @@ def test_session_secret_is_generated_and_persisted(module):
     first_secret = secret_path.read_text().strip()
     assert len(first_secret) >= 48
     assert module.load_session_secret() == first_secret
+
+
+def test_scheduler_waits_until_exact_upgrade_time(module, monkeypatch):
+    client = module.app.test_client()
+    client.post("/api/v1/import", json=payload(3600))
+    monkeypatch.setattr(module.WeComNotifier, "configured", property(lambda self: True))
+
+    delay = module.seconds_until_next_upgrade()
+    assert 3500 <= delay <= 3600
+
+    with module.get_db() as conn:
+        conn.execute(
+            "UPDATE upgrades SET ends_at=? WHERE id='u1'",
+            (
+                (
+                    datetime.now(timezone.utc) - timedelta(seconds=1)
+                ).isoformat().replace("+00:00", "Z"),
+            ),
+        )
+    assert module.seconds_until_next_upgrade() == module.RETRY_INTERVAL

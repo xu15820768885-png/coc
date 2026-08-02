@@ -71,6 +71,48 @@ function feedback(message, error = false) {
   $("feedback").className = error ? "feedback error" : "feedback";
 }
 
+function settingsFeedback(message, error = false) {
+  $("settingsFeedback").textContent = message;
+  $("settingsFeedback").className = error ? "feedback error" : "feedback";
+}
+
+async function loadSettings() {
+  try {
+    const data = await api("/api/v1/settings/wecom");
+    const s = data.settings;
+    $("corpId").value = s.corp_id || "";
+    $("agentId").value = s.agent_id || "";
+    $("wecomSecret").value = "";
+    $("wecomSecret").placeholder = s.secret_set ? "已保存，留空表示不修改" : "请输入应用 Secret";
+    $("toUser").value = s.to_user || "@all";
+    $("apiBase").value = s.api_base || "https://qyapi.weixin.qq.com";
+    $("outboundProxy").value = s.outbound_proxy || "";
+  } catch (error) {
+    settingsFeedback(error.message, true);
+  }
+}
+
+$("saveSettingsBtn").onclick = async () => {
+  try {
+    $("saveSettingsBtn").disabled = true;
+    const payload = {
+      corp_id: $("corpId").value,
+      agent_id: $("agentId").value,
+      secret: $("wecomSecret").value,
+      to_user: $("toUser").value,
+      api_base: $("apiBase").value,
+      outbound_proxy: $("outboundProxy").value
+    };
+    await api("/api/v1/settings/wecom", { method: "PUT", body: JSON.stringify(payload) });
+    settingsFeedback("企业微信设置已保存");
+    await Promise.all([loadSettings(), load()]);
+  } catch (error) {
+    settingsFeedback(error.message, true);
+  } finally {
+    $("saveSettingsBtn").disabled = false;
+  }
+};
+
 $("exampleBtn").onclick = () => { $("jsonInput").value = JSON.stringify(example, null, 2); };
 $("refreshBtn").onclick = load;
 $("importBtn").onclick = async () => {
@@ -90,9 +132,9 @@ $("testBtn").onclick = async () => {
   try {
     $("testBtn").disabled = true;
     await api("/api/v1/notifications/test", { method: "POST" });
-    feedback("测试通知已发送，请查看企业微信");
+    settingsFeedback("测试通知已发送，请查看企业微信");
   } catch (error) {
-    feedback(error.message, true);
+    settingsFeedback(error.message, true);
   } finally {
     $("testBtn").disabled = false;
   }
@@ -105,5 +147,5 @@ $("villages").onclick = async (event) => {
 };
 
 $("apiKey").value = localStorage.getItem("coc-api-key") || "";
-load();
+Promise.all([loadSettings(), load()]);
 setInterval(load, 30000);

@@ -78,6 +78,11 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_upgrades_due
               ON upgrades(status, notified_at, ends_at);
+            CREATE TABLE IF NOT EXISTS settings (
+              key TEXT PRIMARY KEY,
+              value TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
             """
         )
 
@@ -152,13 +157,49 @@ def normalize_import(body):
 
 class WeComNotifier:
     def __init__(self):
-        self.corp_id = os.getenv("WECOM_CORP_ID", "").strip()
-        self.agent_id = os.getenv("WECOM_AGENT_ID", "").strip()
-        self.secret = os.getenv("WECOM_SECRET", "").strip()
-        self.to_user = os.getenv("WECOM_TO_USER", "@all").strip() or "@all"
-        self.base_url = os.getenv("WECOM_API_BASE", "https://qyapi.weixin.qq.com").rstrip("/")
-        proxy_url = os.getenv("OUTBOUND_PROXY", "").strip()
-        self.proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
+        self.corp_id = ""
+        self.agent_id = ""
+        self.secret = ""
+        self.to_user = "@all"
+        self.base_url = "https://qyapi.weixin.qq.com"
+        self.proxy_url = ""
+        self.proxies = None
+        self._token = None
+        self._token_expires = 0
+
+    def refresh(self):
+        defaults = {
+            "wecom_corp_id": os.getenv("WECOM_CORP_ID", "").strip(),
+            "wecom_agent_id": os.getenv("WECOM_AGENT_ID", "").strip(),
+            "wecom_secret": os.getenv("WECOM_SECRET", "").strip(),
+            "wecom_to_user": os.getenv("WECOM_TO_USER", "@all").strip() or "@all",
+            "wecom_api_base": os.getenv(
+                "WECOM_API_BASE", "https://qyapi.weixin.qq.com"
+            ).strip(),
+            "outbound_proxy": os.getenv("OUTBOUND_PROXY", "").strip(),
+        }
+        with get_db() as conn:
+            stored = {
+                row["key"]: row["value"]
+                for row in conn.execute(
+                    "SELECT key, value FROM settings WHERE key LIKE 'wecom_%' "
+                    "OR key = 'outbound_proxy'"
+                )
+            }
+        config = {**defaults, **stored}
+        self.corp_id = config["wecom_corp_id"]
+        self.agent_id = config["wecom_agent_id"]
+        self.secret = config["wecom_secret"]
+        self.to_user = config["wecom_to_user"] or "@all"
+        self.base_url = (
+            config["wecom_api_base"] or "https://qyapi.weixin.qq.com"
+        ).rstrip("/")
+        self.proxy_url = config["outbound_proxy"]
+        self.proxies = (
+            {"http": self.proxy_url, "https": self.proxy_url}
+            if self.proxy_url
+            else None
+        )
         self._token = None
         self._token_expires = 0
 
@@ -298,6 +339,79 @@ def list_villages():
             ).fetchall()
             village["upgrades"] = [row_to_upgrade(row) for row in rows]
     return jsonify({"ok": True, "villages": villages})
+
+
+@app.get("/api/v1/settings/wecom")
+def get_wecom_settings():
+    auth = require_api_key()
+    if auth:
+        return auth
+    return jsonify(
+        {
+            "ok": True,
+            "settings": {
+                "corp_id": notifier.corp_id,
+                "agent_id": notifier.agent_id,
+                "secret": "••••••••" if notifier.secret else "",
+                "secret_set": bool(notifier.secret),
+                "to_user": notifier.to_user,
+                "api_base": notifier.base_url,
+                "outbound_proxy": notifier.proxy_url,
+                "configured": notifier.configured,
+            },
+        }
+    )
+
+
+@app.put("/api/v1/settings/wecom")
+def update_wecom_settings():
+    auth = require_api_key()
+    if auth:
+        return auth
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"ok": False, "error": "请求体必须是 JSON 对象"}), 400
+
+    corp_id = str(body.get("corp_id", "")).strip()
+    agent_id = str(body.get("agent_id", "")).strip()
+    secret = str(body.get("secret", "")).strip()
+    to_user = str(body.get("to_user", "@all")).strip() or "@all"
+    api_base = str(
+        body.get("api_base", "https://qyapi.weixin.qq.com")
+    ).strip().rstrip("/")
+    outbound_proxy = str(body.get("outbound_proxy", "")).strip()
+    if not corp_id:
+        return jsonify({"ok": False, "error": "企业 ID 不能为空"}), 400
+    if not agent_id.isdigit():
+        return jsonify({"ok": False, "error": "AgentID 必须是数字"}), 400
+    if not secret and not notifier.secret:
+        return jsonify({"ok": False, "error": "应用 Secret 不能为空"}), 400
+    if not api_base.startswith(("https://", "http://")):
+        return jsonify({"ok": False, "error": "API 地址必须以 http:// 或 https:// 开头"}), 400
+    if outbound_proxy and not outbound_proxy.startswith(("https://", "http://")):
+        return jsonify({"ok": False, "error": "出站代理必须以 http:// 或 https:// 开头"}), 400
+
+    values = {
+        "wecom_corp_id": corp_id,
+        "wecom_agent_id": agent_id,
+        "wecom_to_user": to_user,
+        "wecom_api_base": api_base,
+        "outbound_proxy": outbound_proxy,
+    }
+    if secret:
+        values["wecom_secret"] = secret
+    updated_at = iso_utc(now_utc())
+    with get_db() as conn:
+        conn.executemany(
+            """
+            INSERT INTO settings(key, value, updated_at) VALUES(?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+              value=excluded.value, updated_at=excluded.updated_at
+            """,
+            [(key, value, updated_at) for key, value in values.items()],
+        )
+    notifier.refresh()
+    return jsonify({"ok": True, "configured": notifier.configured})
 
 
 @app.post("/api/v1/import")
@@ -456,6 +570,7 @@ def check_notifications():
 
 
 init_db()
+notifier.refresh()
 if os.getenv("DISABLE_SCHEDULER", "0") != "1":
     threading.Thread(target=scheduler_loop, name="reminder-scheduler", daemon=True).start()
 

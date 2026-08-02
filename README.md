@@ -20,12 +20,8 @@
    cp .env.example .env
    ```
 
-2. 编辑 `.env`，至少填写：
+2. 编辑 `.env`。强烈建议设置 `API_KEY`，防止公网接口和后台设置被他人修改。企业微信参数可以留空，启动后在网页后台填写：
 
-   - `WECOM_CORP_ID`：企业 ID
-   - `WECOM_AGENT_ID`：自建应用 AgentId
-   - `WECOM_SECRET`：自建应用 Secret
-   - `WECOM_TO_USER`：接收成员账号，或 `@all`
    - `API_KEY`：建议设置一个随机长密码，防止公网接口被他人写入
 
 3. 启动：
@@ -34,9 +30,9 @@
    docker compose up -d --build
    ```
 
-4. 浏览器打开 `http://NAS-IP:802`，点击“发送测试通知”。
+4. 浏览器打开 `http://NAS-IP:802`，在“企业微信通知”中填写 CorpID、AgentID、Secret 和接收成员，然后点击“发送测试通知”。
 
-数据持久化在项目的 `data/` 目录，更新或重建容器不会丢失。
+网页中保存的通知配置和村庄数据都持久化在项目的 `data/` 目录，更新或重建容器不会丢失。`.env` 中的企业微信参数仍然可作为初始默认值；网页保存的设置优先。
 
 ## 云服务器穿透
 
@@ -151,6 +147,7 @@ curl -X POST 'https://coc.example.com/api/v1/import' \
 |---|---|---|
 | `POST` | `/api/v1/import` | 导入或更新村庄升级数据 |
 | `GET` | `/api/v1/villages` | 查询所有村庄和升级状态 |
+| `GET/PUT` | `/api/v1/settings/wecom` | 查看或保存企业微信通知设置 |
 | `DELETE` | `/api/v1/upgrades/{id}` | 删除升级项目 |
 | `POST` | `/api/v1/notifications/test` | 发送企业微信测试消息 |
 | `POST` | `/api/v1/notifications/check` | 立即检查到期项目 |

@@ -43,6 +43,11 @@ textarea, input {
 textarea:focus, input:focus { border-color: var(--blue); }
 textarea { height: 210px; margin: 20px 0 12px; padding: 16px; resize: vertical; font: 13px/1.55 ui-monospace, SFMono-Regular, monospace; }
 input { max-width: 280px; padding: 11px 13px; }
+.settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 20px; }
+.settings-grid label span { display: block; margin: 0 0 7px 3px; color: var(--muted); font-size: 13px; }
+.settings-grid input { max-width: none; }
+.settings-grid .wide { grid-column: 1 / -1; }
+.settings-actions { margin-top: 18px; }
 button {
   border: 0; border-radius: 11px; padding: 11px 17px; background: var(--orange);
   color: white; font-weight: 700; cursor: pointer; white-space: nowrap;
@@ -75,6 +80,8 @@ button.secondary { background: #29262e; color: #d9d4dd; border: 1px solid #3b374
   .stats article { padding: 15px; }
   .stats strong { font-size: 25px; }
   .panel { padding: 18px; border-radius: 16px; }
+  .settings-grid { grid-template-columns: 1fr; }
+  .settings-grid .wide { grid-column: auto; }
   .panel-title { align-items: flex-start; }
   .upgrade { grid-template-columns: 40px 1fr auto; }
   .delete { display: none; }

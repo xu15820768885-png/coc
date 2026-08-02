@@ -118,3 +118,40 @@ def test_new_raw_snapshot_makes_missing_upgrade_due(module):
     )
     upgrade = client.get("/api/v1/villages").json["villages"][0]["upgrades"][0]
     assert upgrade["remaining_seconds"] == 0
+
+
+def test_wecom_settings_are_persisted_and_secret_is_masked(module):
+    client = module.app.test_client()
+    response = client.put(
+        "/api/v1/settings/wecom",
+        json={
+            "corp_id": "ww-test",
+            "agent_id": "1000002",
+            "secret": "top-secret-value",
+            "to_user": "zhangsan|lisi",
+            "api_base": "https://qyapi.weixin.qq.com",
+            "outbound_proxy": "",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json["configured"] is True
+
+    settings = client.get("/api/v1/settings/wecom").json["settings"]
+    assert settings["secret"] == "••••••••"
+    assert settings["secret_set"] is True
+    assert "top-secret-value" not in str(settings)
+    assert settings["to_user"] == "zhangsan|lisi"
+
+    client.put(
+        "/api/v1/settings/wecom",
+        json={
+            "corp_id": "ww-updated",
+            "agent_id": "1000003",
+            "secret": "",
+            "to_user": "@all",
+            "api_base": "https://qyapi.weixin.qq.com",
+            "outbound_proxy": "",
+        },
+    )
+    assert module.notifier.secret == "top-secret-value"
+    assert module.notifier.corp_id == "ww-updated"

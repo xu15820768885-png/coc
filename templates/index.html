@@ -23,6 +23,26 @@
       <article><span>已完成</span><strong id="doneCount">0</strong></article>
     </section>
 
+    <section class="panel">
+      <div class="panel-title">
+        <div><h2>企业微信通知</h2><p>配置保存在 Docker 数据目录，Secret 不会在页面中回显。</p></div>
+      </div>
+      <div class="settings-grid">
+        <label><span>企业 ID（CorpID）</span><input id="corpId" placeholder="wwxxxxxxxxxxxxxxxx"></label>
+        <label><span>应用 AgentID</span><input id="agentId" inputmode="numeric" placeholder="1000002"></label>
+        <label><span>应用 Secret</span><input id="wecomSecret" type="password" placeholder="留空表示不修改"></label>
+        <label><span>接收成员</span><input id="toUser" placeholder="@all，多个账号用 | 分隔"></label>
+        <label class="wide"><span>企业微信 API / MP 转发地址</span><input id="apiBase" placeholder="https://qyapi.weixin.qq.com"></label>
+        <label class="wide"><span>云服务器 HTTP 出站代理（可选）</span><input id="outboundProxy" placeholder="http://user:pass@服务器IP:端口"></label>
+      </div>
+      <div class="actions settings-actions">
+        <input id="apiKey" type="password" placeholder="后台 API Key（如已配置）">
+        <button id="saveSettingsBtn">保存通知设置</button>
+        <button class="secondary" id="testBtn">发送测试通知</button>
+      </div>
+      <p id="settingsFeedback" class="feedback"></p>
+    </section>
+
     <section class="panel import-panel">
       <div class="panel-title">
         <div><h2>导入村庄数据</h2><p>粘贴 JSON 后保存，相同 ID 会自动更新。</p></div>
@@ -30,9 +50,7 @@
       </div>
       <textarea id="jsonInput" spellcheck="false" placeholder='{"village": {...}, "upgrades": [...]}'></textarea>
       <div class="actions">
-        <input id="apiKey" type="password" placeholder="API Key（如已配置）">
         <button id="importBtn">保存并开始提醒</button>
-        <button class="secondary" id="testBtn">发送测试通知</button>
       </div>
       <p id="feedback" class="feedback"></p>
     </section>

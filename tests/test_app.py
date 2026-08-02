@@ -1,7 +1,12 @@
+import base64
+import hashlib
 import importlib
+import json
+import struct
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from Crypto.Cipher import AES
 
 
 @pytest.fixture()
@@ -30,6 +35,27 @@ def payload(seconds=3600):
             }
         ],
     }
+
+
+def encrypt_wecom_message(aes_key, receive_id, message):
+    key = base64.b64decode(aes_key + "=")
+    plain = (
+        b"0123456789abcdef"
+        + struct.pack(">I", len(message.encode("utf-8")))
+        + message.encode("utf-8")
+        + receive_id.encode("utf-8")
+    )
+    padding = 32 - len(plain) % 32
+    padded = plain + bytes([padding]) * padding
+    return base64.b64encode(
+        AES.new(key, AES.MODE_CBC, key[:16]).encrypt(padded)
+    ).decode()
+
+
+def wecom_signature(token, timestamp, nonce, encrypted):
+    return hashlib.sha1(
+        "".join(sorted([token, timestamp, nonce, encrypted])).encode()
+    ).hexdigest()
 
 
 def test_import_and_list(module):
@@ -219,3 +245,144 @@ def test_scheduler_waits_until_exact_upgrade_time(module, monkeypatch):
             ),
         )
     assert module.seconds_until_next_upgrade() == module.RETRY_INTERVAL
+
+
+def test_wecom_callback_verification_and_text_json_import(module, monkeypatch):
+    token = "callbackToken123"
+    aes_key = base64.b64encode(b"k" * 32).decode().rstrip("=")
+    corp_id = "ww-callback-test"
+    client = module.app.test_client()
+    saved = client.put(
+        "/api/v1/settings/wecom",
+        json={
+            "corp_id": corp_id,
+            "agent_id": "1000002",
+            "secret": "outgoing-secret",
+            "to_user": "@all",
+            "api_base": "https://qyapi.weixin.qq.com",
+            "outbound_proxy": "",
+            "callback_token": token,
+            "callback_aes_key": aes_key,
+        },
+    )
+    assert saved.status_code == 200
+    settings = client.get(
+        "/api/v1/settings/wecom",
+        headers={
+            "X-Forwarded-Proto": "https",
+            "X-Forwarded-Host": "coc.weige1999.xin",
+        },
+    ).json["settings"]
+    assert (
+        settings["callback_url"]
+        == "https://coc.weige1999.xin/api/v1/wecom/callback"
+    )
+
+    timestamp = "1785650000"
+    nonce = "123456"
+    encrypted_echo = encrypt_wecom_message(aes_key, corp_id, "verified-echo")
+    response = client.get(
+        "/api/v1/wecom/callback",
+        query_string={
+            "msg_signature": wecom_signature(
+                token, timestamp, nonce, encrypted_echo
+            ),
+            "timestamp": timestamp,
+            "nonce": nonce,
+            "echostr": encrypted_echo,
+        },
+    )
+    assert response.status_code == 200
+    assert response.get_data(as_text=True) == "verified-echo"
+
+    replies = []
+    monkeypatch.setattr(
+        module.notifier,
+        "send_text",
+        lambda content, to_user=None: replies.append((to_user, content))
+        or {"errcode": 0},
+    )
+
+    class ImmediateThread:
+        def __init__(self, target, args=(), **kwargs):
+            self.target = target
+            self.args = args
+
+        def start(self):
+            self.target(*self.args)
+
+    monkeypatch.setattr(module.threading, "Thread", ImmediateThread)
+    json_text = json.dumps(payload(), ensure_ascii=False)
+    inner_xml = (
+        "<xml>"
+        f"<ToUserName><![CDATA[{corp_id}]]></ToUserName>"
+        "<FromUserName><![CDATA[zhangsan]]></FromUserName>"
+        "<CreateTime>1785650000</CreateTime>"
+        "<MsgType><![CDATA[text]]></MsgType>"
+        f"<Content><![CDATA[{json_text}]]></Content>"
+        "<MsgId>987654321</MsgId>"
+        "<AgentID>1000002</AgentID>"
+        "</xml>"
+    )
+    encrypted = encrypt_wecom_message(aes_key, corp_id, inner_xml)
+    signature = wecom_signature(token, timestamp, nonce, encrypted)
+    outer_xml = f"<xml><Encrypt><![CDATA[{encrypted}]]></Encrypt></xml>"
+    callback = client.post(
+        "/api/v1/wecom/callback",
+        query_string={
+            "msg_signature": signature,
+            "timestamp": timestamp,
+            "nonce": nonce,
+        },
+        data=outer_xml,
+        content_type="application/xml",
+    )
+    assert callback.status_code == 200
+    assert client.get("/api/v1/villages").json["villages"][0]["id"] == "v1"
+    assert replies[0][0] == "zhangsan"
+    assert "导入成功" in replies[0][1]
+
+    duplicate = client.post(
+        "/api/v1/wecom/callback",
+        query_string={
+            "msg_signature": signature,
+            "timestamp": timestamp,
+            "nonce": nonce,
+        },
+        data=outer_xml,
+        content_type="application/xml",
+    )
+    assert duplicate.status_code == 200
+    assert len(replies) == 1
+
+    monkeypatch.setattr(
+        module.notifier,
+        "download_media",
+        lambda media_id: json.dumps(payload(7200), ensure_ascii=False).encode(),
+    )
+    module.process_wecom_incoming_message(
+        {
+            "FromUserName": "zhangsan",
+            "MsgType": "file",
+            "FileName": "village.json",
+            "MediaId": "media-123",
+        }
+    )
+    assert "导入成功" in replies[-1][1]
+
+
+def test_wecom_crypto_accepts_large_json_text(module):
+    token = "callbackToken123"
+    aes_key = base64.b64encode(b"z" * 32).decode().rstrip("=")
+    corp_id = "ww-large-json"
+    large_json = json.dumps(
+        {
+            "tag": "#LARGE",
+            "timestamp": 1785650000,
+            "buildings": [{"data": 1000085, "lvl": 1, "timer": 3600}],
+            "padding": "x" * 12000,
+        }
+    )
+    encrypted = encrypt_wecom_message(aes_key, corp_id, large_json)
+    crypto = module.WeComCallbackCrypto(token, aes_key, corp_id)
+    assert crypto.decrypt(encrypted) == large_json

@@ -1,17 +1,23 @@
+import base64
+import hashlib
 import json
 import os
 import secrets
 import sqlite3
+import struct
 import threading
 import time
 import uuid
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import requests
-from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+from Crypto.Cipher import AES
+from flask import Flask, Response, jsonify, redirect, render_template, request, session, url_for
 from game_data import EXPORT_SECTIONS, item_name
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 
 APP_TZ = ZoneInfo(os.getenv("TZ", "Asia/Shanghai"))
@@ -51,6 +57,7 @@ def load_session_secret():
 
 
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 app.json.ensure_ascii = False
 app.secret_key = load_session_secret()
 app.config.update(
@@ -119,6 +126,11 @@ def init_db():
               key TEXT PRIMARY KEY,
               value TEXT NOT NULL,
               updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS wecom_messages (
+              msg_id TEXT PRIMARY KEY,
+              from_user TEXT NOT NULL,
+              received_at TEXT NOT NULL
             );
             """
         )
@@ -261,11 +273,11 @@ class WeComNotifier:
         self._token_expires = time.time() + int(payload.get("expires_in", 7200)) - 300
         return self._token
 
-    def send_text(self, content):
+    def send_text(self, content, to_user=None):
         if not self.configured:
             raise RuntimeError("尚未配置企业微信 WECOM_CORP_ID / WECOM_AGENT_ID / WECOM_SECRET")
         payload = {
-            "touser": self.to_user,
+            "touser": to_user or self.to_user,
             "msgtype": "text",
             "agentid": int(self.agent_id),
             "text": {"content": content},
@@ -285,6 +297,62 @@ class WeComNotifier:
         if result.get("errcode") != 0:
             raise RuntimeError(f"企业微信发送失败：{result}")
         return result
+
+    def download_media(self, media_id):
+        response = requests.get(
+            f"{self.base_url}/cgi-bin/media/get",
+            params={"access_token": self.token(), "media_id": media_id},
+            proxies=self.proxies,
+            timeout=30,
+        )
+        response.raise_for_status()
+        content_type = response.headers.get("Content-Type", "")
+        if "application/json" in content_type:
+            payload = response.json()
+            raise RuntimeError(f"下载企业微信文件失败：{payload}")
+        return response.content
+
+
+class WeComCallbackCrypto:
+    def __init__(self, token, encoding_aes_key, receive_id):
+        if not token or len(token) > 32:
+            raise ValueError("回调 Token 必须为不超过 32 位的英文或数字")
+        if len(encoding_aes_key) != 43:
+            raise ValueError("EncodingAESKey 必须是 43 位")
+        try:
+            self.key = base64.b64decode(encoding_aes_key + "=", validate=True)
+        except Exception as exc:
+            raise ValueError("EncodingAESKey 格式无效") from exc
+        if len(self.key) != 32:
+            raise ValueError("EncodingAESKey 解码后长度无效")
+        self.token = token
+        self.receive_id = receive_id
+
+    def verify_signature(self, signature, timestamp, nonce, encrypted):
+        parts = sorted([self.token, str(timestamp), str(nonce), encrypted])
+        expected = hashlib.sha1("".join(parts).encode("utf-8")).hexdigest()
+        if not secrets.compare_digest(expected, signature or ""):
+            raise ValueError("企业微信回调签名验证失败")
+
+    def decrypt(self, encrypted):
+        try:
+            ciphertext = base64.b64decode(encrypted)
+            padded = AES.new(self.key, AES.MODE_CBC, self.key[:16]).decrypt(ciphertext)
+        except Exception as exc:
+            raise ValueError("企业微信消息解密失败") from exc
+        padding = padded[-1]
+        if padding < 1 or padding > 32 or padded[-padding:] != bytes([padding]) * padding:
+            raise ValueError("企业微信消息填充无效")
+        plain = padded[:-padding]
+        if len(plain) < 20:
+            raise ValueError("企业微信消息长度无效")
+        message_length = struct.unpack(">I", plain[16:20])[0]
+        message_end = 20 + message_length
+        message = plain[20:message_end]
+        receive_id = plain[message_end:].decode("utf-8")
+        if self.receive_id and not secrets.compare_digest(receive_id, self.receive_id):
+            raise ValueError("企业微信回调 CorpID 不匹配")
+        return message.decode("utf-8")
 
 
 notifier = WeComNotifier()
@@ -433,6 +501,16 @@ def get_wecom_settings():
     auth = require_access()
     if auth:
         return auth
+    with get_db() as conn:
+        callback_values = {
+            row["key"]: row["value"]
+            for row in conn.execute(
+                "SELECT key, value FROM settings WHERE key IN "
+                "('wecom_callback_token', 'wecom_callback_aes_key')"
+            )
+        }
+    callback_token_set = bool(callback_values.get("wecom_callback_token"))
+    callback_aes_key_set = bool(callback_values.get("wecom_callback_aes_key"))
     return jsonify(
         {
             "ok": True,
@@ -445,6 +523,12 @@ def get_wecom_settings():
                 "api_base": notifier.base_url,
                 "outbound_proxy": notifier.proxy_url,
                 "configured": notifier.configured,
+                "callback_url": url_for("wecom_callback", _external=True),
+                "callback_token": "••••••••" if callback_token_set else "",
+                "callback_token_set": callback_token_set,
+                "callback_aes_key": "••••••••" if callback_aes_key_set else "",
+                "callback_aes_key_set": callback_aes_key_set,
+                "callback_configured": callback_token_set and callback_aes_key_set,
             },
         }
     )
@@ -467,6 +551,8 @@ def update_wecom_settings():
         body.get("api_base", "https://qyapi.weixin.qq.com")
     ).strip().rstrip("/")
     outbound_proxy = str(body.get("outbound_proxy", "")).strip()
+    callback_token = str(body.get("callback_token", "")).strip()
+    callback_aes_key = str(body.get("callback_aes_key", "")).strip()
     if not corp_id:
         return jsonify({"ok": False, "error": "企业 ID 不能为空"}), 400
     if not agent_id.isdigit():
@@ -477,6 +563,29 @@ def update_wecom_settings():
         return jsonify({"ok": False, "error": "API 地址必须以 http:// 或 https:// 开头"}), 400
     if outbound_proxy and not outbound_proxy.startswith(("https://", "http://")):
         return jsonify({"ok": False, "error": "出站代理必须以 http:// 或 https:// 开头"}), 400
+    with get_db() as conn:
+        existing_callback = {
+            row["key"]: row["value"]
+            for row in conn.execute(
+                "SELECT key, value FROM settings WHERE key IN "
+                "('wecom_callback_token', 'wecom_callback_aes_key')"
+            )
+        }
+    effective_token = callback_token or existing_callback.get("wecom_callback_token", "")
+    effective_aes_key = callback_aes_key or existing_callback.get(
+        "wecom_callback_aes_key", ""
+    )
+    if bool(effective_token) != bool(effective_aes_key):
+        return jsonify({"ok": False, "error": "回调 Token 和 EncodingAESKey 必须同时填写"}), 400
+    if effective_token:
+        if not effective_token.isalnum() or len(effective_token) > 32:
+            return jsonify(
+                {"ok": False, "error": "回调 Token 必须为不超过 32 位的英文或数字"}
+            ), 400
+        try:
+            WeComCallbackCrypto(effective_token, effective_aes_key, corp_id)
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
 
     values = {
         "wecom_corp_id": corp_id,
@@ -487,6 +596,10 @@ def update_wecom_settings():
     }
     if secret:
         values["wecom_secret"] = secret
+    if callback_token:
+        values["wecom_callback_token"] = callback_token
+    if callback_aes_key:
+        values["wecom_callback_aes_key"] = callback_aes_key
     updated_at = iso_utc(now_utc())
     with get_db() as conn:
         conn.executemany(
@@ -502,125 +615,224 @@ def update_wecom_settings():
     return jsonify({"ok": True, "configured": notifier.configured})
 
 
-@app.post("/api/v1/import")
-def import_village():
-    auth = require_access()
-    if auth:
-        return auth
-    body = request.get_json(silent=True)
+def save_import_payload(body):
     if not isinstance(body, dict):
-        return jsonify({"ok": False, "error": "请求体必须是 JSON 对象"}), 400
-    try:
-        body, input_format = normalize_import(body)
-    except (ValueError, TypeError, OverflowError, OSError) as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 400
+        raise ValueError("请求体必须是 JSON 对象")
+    body, input_format = normalize_import(body)
     village = body.get("village") or {}
     upgrades = body.get("upgrades")
     if not isinstance(village, dict) or not village.get("name"):
-        return jsonify({"ok": False, "error": "village.name 不能为空"}), 400
+        raise ValueError("village.name 不能为空")
     if not isinstance(upgrades, list):
-        return jsonify({"ok": False, "error": "upgrades 必须是数组"}), 400
+        raise ValueError("upgrades 必须是数组")
 
     village_id = str(village.get("id") or village.get("player_tag") or uuid.uuid4())
     imported = 0
     imported_ids = []
     current = now_utc()
     current_iso = iso_utc(current)
-    try:
-        with get_db() as conn:
+    with get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO villages(id, name, player_tag, updated_at) VALUES(?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              name=excluded.name, player_tag=excluded.player_tag, updated_at=excluded.updated_at
+            """,
+            (village_id, str(village["name"]), str(village.get("player_tag", "")), current_iso),
+        )
+        for item in upgrades:
+            if not isinstance(item, dict) or not item.get("name"):
+                raise ValueError("每个升级项目都必须包含 name")
+            end = parse_time(item.get("ends_at"))
+            if end is None and item.get("duration_seconds") is not None:
+                end = current + timedelta(seconds=int(item["duration_seconds"]))
+            if end is None:
+                raise ValueError(f"{item['name']} 缺少 ends_at 或 duration_seconds")
+            start = parse_time(item.get("started_at")) or current
+            item_id = str(
+                item.get("id")
+                or uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"{village_id}:{item['name']}:{iso_utc(end)}",
+                )
+            )
+            status = "completed" if end <= current and item.get("completed") else "upgrading"
             conn.execute(
                 """
-                INSERT INTO villages(id, name, player_tag, updated_at) VALUES(?, ?, ?, ?)
+                INSERT INTO upgrades(
+                  id, village_id, name, category, level_from, level_to,
+                  started_at, ends_at, status, notified_at, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
-                  name=excluded.name, player_tag=excluded.player_tag, updated_at=excluded.updated_at
+                  village_id=excluded.village_id, name=excluded.name,
+                  category=excluded.category, level_from=excluded.level_from,
+                  level_to=excluded.level_to, started_at=excluded.started_at,
+                  ends_at=excluded.ends_at, status=excluded.status,
+                  notified_at=CASE
+                    WHEN upgrades.ends_at != excluded.ends_at THEN NULL
+                    ELSE upgrades.notified_at
+                  END,
+                  updated_at=excluded.updated_at
                 """,
-                (village_id, str(village["name"]), str(village.get("player_tag", "")), current_iso),
+                (
+                    item_id,
+                    village_id,
+                    str(item["name"]),
+                    str(item.get("category", "其他")),
+                    item.get("level_from"),
+                    item.get("level_to"),
+                    iso_utc(start),
+                    iso_utc(end),
+                    status,
+                    current_iso,
+                    current_iso,
+                ),
             )
-            for item in upgrades:
-                if not isinstance(item, dict) or not item.get("name"):
-                    raise ValueError("每个升级项目都必须包含 name")
-                end = parse_time(item.get("ends_at"))
-                if end is None and item.get("duration_seconds") is not None:
-                    end = current + timedelta(seconds=int(item["duration_seconds"]))
-                if end is None:
-                    raise ValueError(f"{item['name']} 缺少 ends_at 或 duration_seconds")
-                start = parse_time(item.get("started_at")) or current
-                item_id = str(
-                    item.get("id")
-                    or uuid.uuid5(
-                        uuid.NAMESPACE_URL,
-                        f"{village_id}:{item['name']}:{iso_utc(end)}",
-                    )
-                )
-                status = "completed" if end <= current and item.get("completed") else "upgrading"
-                conn.execute(
-                    """
-                    INSERT INTO upgrades(
-                      id, village_id, name, category, level_from, level_to,
-                      started_at, ends_at, status, notified_at, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                      village_id=excluded.village_id, name=excluded.name,
-                      category=excluded.category, level_from=excluded.level_from,
-                      level_to=excluded.level_to, started_at=excluded.started_at,
-                      ends_at=excluded.ends_at, status=excluded.status,
-                      notified_at=CASE
-                        WHEN upgrades.ends_at != excluded.ends_at THEN NULL
-                        ELSE upgrades.notified_at
-                      END,
-                      updated_at=excluded.updated_at
-                    """,
-                    (
-                        item_id,
-                        village_id,
-                        str(item["name"]),
-                        str(item.get("category", "其他")),
-                        item.get("level_from"),
-                        item.get("level_to"),
-                        iso_utc(start),
-                        iso_utc(end),
-                        status,
-                        current_iso,
-                        current_iso,
-                    ),
-                )
-                imported += 1
-                imported_ids.append(item_id)
-            if input_format == "game_export":
-                # A new game snapshot is authoritative for active timers. If an
-                # old raw-export item vanished, make it due now so it is
-                # announced once instead of lingering until an outdated ETA.
-                parameters = [current_iso, current_iso, village_id, f"{village_id}:%"]
-                missing_clause = ""
-                if imported_ids:
-                    placeholders = ",".join("?" for _ in imported_ids)
-                    missing_clause = f" AND id NOT IN ({placeholders})"
-                    parameters.extend(imported_ids)
-                conn.execute(
-                    """
-                    UPDATE upgrades
-                    SET ends_at = MIN(ends_at, ?), updated_at = ?
-                    WHERE village_id = ?
-                      AND status = 'upgrading'
-                      AND notified_at IS NULL
-                      AND id LIKE ?
-                    """
-                    + missing_clause,
-                    parameters,
-                )
-    except (ValueError, TypeError, OverflowError) as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 400
+            imported += 1
+            imported_ids.append(item_id)
+        if input_format == "game_export":
+            parameters = [current_iso, current_iso, village_id, f"{village_id}:%"]
+            missing_clause = ""
+            if imported_ids:
+                placeholders = ",".join("?" for _ in imported_ids)
+                missing_clause = f" AND id NOT IN ({placeholders})"
+                parameters.extend(imported_ids)
+            conn.execute(
+                """
+                UPDATE upgrades
+                SET ends_at = MIN(ends_at, ?), updated_at = ?
+                WHERE village_id = ?
+                  AND status = 'upgrading'
+                  AND notified_at IS NULL
+                  AND id LIKE ?
+                """
+                + missing_clause,
+                parameters,
+            )
     sent = process_due_upgrades()
     scheduler_wakeup.set()
-    return jsonify(
-        {
-            "ok": True,
-            "village_id": village_id,
-            "imported": imported,
-            "format": input_format,
-            "notifications_sent": sent,
+    return {
+        "ok": True,
+        "village_id": village_id,
+        "imported": imported,
+        "format": input_format,
+        "notifications_sent": sent,
+    }
+
+
+def get_wecom_callback_crypto():
+    with get_db() as conn:
+        values = {
+            row["key"]: row["value"]
+            for row in conn.execute(
+                "SELECT key, value FROM settings WHERE key IN "
+                "('wecom_callback_token', 'wecom_callback_aes_key')"
+            )
         }
-    ), 201
+    token = values.get("wecom_callback_token", "")
+    aes_key = values.get("wecom_callback_aes_key", "")
+    if not token or not aes_key:
+        raise ValueError("尚未在网页后台配置回调 Token 和 EncodingAESKey")
+    return WeComCallbackCrypto(token, aes_key, notifier.corp_id)
+
+
+def send_wecom_import_result(from_user, content):
+    try:
+        notifier.send_text(content, to_user=from_user.split("/")[-1])
+    except Exception:
+        app.logger.exception("发送企业微信 JSON 导入结果失败")
+
+
+def process_wecom_incoming_message(message):
+    from_user = message.get("FromUserName", "")
+    try:
+        msg_type = message.get("MsgType", "")
+        if msg_type == "text":
+            raw_json = message.get("Content", "").strip()
+        elif msg_type == "file":
+            file_name = message.get("FileName", "village.json")
+            media_id = message.get("MediaId", "")
+            if not media_id:
+                raise ValueError("企业微信文件消息缺少 MediaId")
+            raw_json = notifier.download_media(media_id).decode("utf-8-sig")
+            if not file_name.lower().endswith((".json", ".txt")):
+                raise ValueError("请发送 .json 或 .txt 文件")
+        else:
+            raise ValueError("请发送村庄 JSON 文本，或发送 .json 文件")
+        payload = json.loads(raw_json)
+        result = save_import_payload(payload)
+        send_wecom_import_result(
+            from_user,
+            "✅ 村庄 JSON 导入成功\n"
+            f"村庄：{result['village_id']}\n"
+            f"进行中项目：{result['imported']} 个\n"
+            "升级完成后会自动通知。",
+        )
+    except Exception as exc:
+        app.logger.exception("处理企业微信村庄 JSON 失败")
+        send_wecom_import_result(from_user, f"❌ 村庄 JSON 导入失败\n原因：{exc}")
+
+
+@app.route("/api/v1/wecom/callback", methods=["GET", "POST"])
+def wecom_callback():
+    try:
+        crypto = get_wecom_callback_crypto()
+        signature = request.args.get("msg_signature", "")
+        timestamp = request.args.get("timestamp", "")
+        nonce = request.args.get("nonce", "")
+        if request.method == "GET":
+            encrypted_echo = request.args.get("echostr", "")
+            crypto.verify_signature(signature, timestamp, nonce, encrypted_echo)
+            return Response(crypto.decrypt(encrypted_echo), mimetype="text/plain")
+
+        outer_root = ET.fromstring(request.get_data(cache=False))
+        encrypted = outer_root.findtext("Encrypt", "")
+        if not encrypted:
+            raise ValueError("企业微信回调缺少 Encrypt")
+        crypto.verify_signature(signature, timestamp, nonce, encrypted)
+        inner_xml = crypto.decrypt(encrypted)
+        inner_root = ET.fromstring(inner_xml)
+        message = {child.tag: child.text or "" for child in inner_root}
+        msg_id = message.get("MsgId") or hashlib.sha1(
+            (
+                message.get("FromUserName", "")
+                + ":"
+                + message.get("CreateTime", "")
+                + ":"
+                + message.get("MsgType", "")
+            ).encode("utf-8")
+        ).hexdigest()
+        with get_db() as conn:
+            cursor = conn.execute(
+                """
+                INSERT OR IGNORE INTO wecom_messages(msg_id, from_user, received_at)
+                VALUES(?, ?, ?)
+                """,
+                (msg_id, message.get("FromUserName", ""), iso_utc(now_utc())),
+            )
+        if cursor.rowcount:
+            threading.Thread(
+                target=process_wecom_incoming_message,
+                args=(message,),
+                name=f"wecom-message-{msg_id}",
+                daemon=True,
+            ).start()
+        return Response("", status=200)
+    except (ValueError, ET.ParseError) as exc:
+        app.logger.warning("拒绝企业微信回调：%s", exc)
+        return Response(str(exc), status=400, mimetype="text/plain")
+
+
+@app.post("/api/v1/import")
+def import_village():
+    auth = require_access()
+    if auth:
+        return auth
+    try:
+        result = save_import_payload(request.get_json(silent=True))
+        return jsonify(result), 201
+    except (ValueError, TypeError, OverflowError, OSError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
 
 
 @app.delete("/api/v1/upgrades/<upgrade_id>")

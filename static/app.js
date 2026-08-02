@@ -85,6 +85,11 @@ async function loadSettings() {
     $("toUser").value = s.to_user || "@all";
     $("apiBase").value = s.api_base || "https://qyapi.weixin.qq.com";
     $("outboundProxy").value = s.outbound_proxy || "";
+    $("callbackUrl").value = s.callback_url || "";
+    $("callbackToken").value = "";
+    $("callbackToken").placeholder = s.callback_token_set ? "已保存，留空表示不修改" : "输入企业微信回调 Token";
+    $("callbackAesKey").value = "";
+    $("callbackAesKey").placeholder = s.callback_aes_key_set ? "已保存，留空表示不修改" : "输入 43 位 EncodingAESKey";
   } catch (error) {
     settingsFeedback(error.message, true);
   }
@@ -99,7 +104,9 @@ $("saveSettingsBtn").onclick = async () => {
       secret: $("wecomSecret").value,
       to_user: $("toUser").value,
       api_base: $("apiBase").value,
-      outbound_proxy: $("outboundProxy").value
+      outbound_proxy: $("outboundProxy").value,
+      callback_token: $("callbackToken").value,
+      callback_aes_key: $("callbackAesKey").value
     };
     await api("/api/v1/settings/wecom", { method: "PUT", body: JSON.stringify(payload) });
     settingsFeedback("企业微信设置已保存");

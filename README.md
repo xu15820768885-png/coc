@@ -74,6 +74,28 @@ curl -X POST 'https://coc.example.com/api/v1/import' \
 
 不要把普通穿透地址直接填到 `OUTBOUND_PROXY`，除非它本身就是标准 HTTP 代理。
 
+## 通过企业微信发送村庄 JSON
+
+服务支持企业微信加密回调，可以直接把游戏复制出的整段 JSON 文本粘贴发送给自建应用；`.json` 文件仅作为备用方式。
+
+回调地址固定为：
+
+```text
+https://coc.weige1999.xin/api/v1/wecom/callback
+```
+
+配置顺序：
+
+1. 在企业微信自建应用的“API 接收消息”页面生成 Token 和 EncodingAESKey，先不要点击保存。
+2. 登录 COC 网页后台，把相同的 Token 和 EncodingAESKey 填入“企业微信通知”区域并保存。
+3. 回到企业微信管理后台，URL 填上面的回调地址，Token 和 EncodingAESKey 保持完全一致，然后保存。
+4. 在企业微信里打开该应用，直接粘贴并发送游戏导出的完整 JSON 文本。
+5. Docker 解密消息并导入后，会通过企业微信主动回复导入结果；升级完成后继续自动通知。
+
+企业微信回调会重试消息，服务使用 `MsgId` 去重，同一条消息不会重复导入。
+
+注意：同一个企业微信自建应用只能配置一个接收消息 URL。如果 MoviePilot 已经使用该应用接收消息，请为 COC 新建一个独立自建应用；可以继续使用同一个企业 ID 和 `https://wx.weige1999.xin` 转发服务，但 COC 应使用新的 AgentID 和 Secret，避免覆盖 MoviePilot 的回调。
+
 ## 游戏原始 JSON（推荐）
 
 可以直接粘贴《部落冲突》设置中“导出村庄数据”复制出的整段 JSON，不需要转换。服务会：

@@ -37,6 +37,9 @@
         <label><span>接收成员</span><input id="toUser" placeholder="@all，多个账号用 | 分隔"></label>
         <label class="wide"><span>企业微信 API / MP 转发地址</span><input id="apiBase" placeholder="https://qyapi.weixin.qq.com"></label>
         <label class="wide"><span>云服务器 HTTP 出站代理（可选）</span><input id="outboundProxy" placeholder="http://user:pass@服务器IP:端口"></label>
+        <label class="wide"><span>企业微信接收消息 URL</span><input id="callbackUrl" readonly></label>
+        <label><span>回调 Token</span><input id="callbackToken" type="password" placeholder="与企业微信后台保持一致"></label>
+        <label><span>回调 EncodingAESKey</span><input id="callbackAesKey" type="password" placeholder="与企业微信后台保持一致"></label>
       </div>
       <div class="actions settings-actions">
         <button id="saveSettingsBtn">保存通知设置</button>

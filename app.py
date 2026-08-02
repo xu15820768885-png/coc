@@ -37,6 +37,12 @@ ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin").strip()
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "change-me")
 AUTH_DISABLED = os.getenv("DISABLE_AUTH", "0") == "1"
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+VILLAGE_SLOT_NAMES = {
+    "A": "sakura",
+    "B": "shine",
+    "C": "dizzy",
+    "D": "erii",
+}
 
 
 def load_session_secret():
@@ -162,7 +168,7 @@ def init_db():
             row["slot"] for row in conn.execute("SELECT slot FROM village_slots")
         }
         available_slots = [
-            slot for slot in ("A", "B", "C", "D") if slot not in used_slots
+            slot for slot in VILLAGE_SLOT_NAMES if slot not in used_slots
         ]
         villages = conn.execute(
             "SELECT id FROM villages ORDER BY updated_at, id"
@@ -177,17 +183,18 @@ def init_db():
                 """,
                 (village["id"], available_slots.pop(0), iso_utc(now_utc())),
             )
-        conn.execute(
-            """
-            UPDATE villages
-            SET name='村庄' || (
-              SELECT slot FROM village_slots
-              WHERE village_slots.village_id=villages.id
+        for slot, display_name in VILLAGE_SLOT_NAMES.items():
+            conn.execute(
+                """
+                UPDATE villages
+                SET name=?
+                WHERE (name='村庄 ' || player_tag OR name=?)
+                  AND id IN (
+                    SELECT village_id FROM village_slots WHERE slot=?
+                  )
+                """,
+                (display_name, f"村庄{slot}", slot),
             )
-            WHERE name='村庄 ' || player_tag
-              AND id IN (SELECT village_id FROM village_slots)
-            """
-        )
 
 
 def require_access():
@@ -538,7 +545,7 @@ def build_wecom_menu():
             "sub_button": [
                 {
                     "type": "click",
-                    "name": f"村庄{row['slot']}",
+                    "name": VILLAGE_SLOT_NAMES[row["slot"]],
                     "key": f"COC_VILLAGE_{row['slot']}",
                 }
                 for row in rows
@@ -589,7 +596,7 @@ def village_progress_messages(slot=None):
             ).fetchall()
             tag = village["player_tag"] or village["id"]
             lines = [
-                f"🏡 村庄{village['slot']} 升级进度",
+                f"🏡 {VILLAGE_SLOT_NAMES[village['slot']]} 升级进度",
                 f"标签：{tag}",
                 f"进行中项目：{len(upgrades)} 个",
             ]
@@ -615,7 +622,8 @@ def village_progress_messages(slot=None):
                 lines.append("当前没有进行中的升级。")
             messages.append("\n".join(lines))
     if slot and not messages:
-        return [f"尚未绑定村庄{slot}，直接发送该村庄的 JSON 即可自动绑定。"]
+        display_name = VILLAGE_SLOT_NAMES.get(slot, slot)
+        return [f"尚未绑定 {display_name}，直接发送该村庄的 JSON 即可自动绑定。"]
     if not messages:
         return ["尚未导入村庄。直接发送游戏 JSON，系统会自动识别并绑定。"]
     return messages
@@ -979,7 +987,7 @@ def save_import_payload(body):
             slot = next(
                 (
                     candidate
-                    for candidate in ("A", "B", "C", "D")
+                    for candidate in VILLAGE_SLOT_NAMES
                     if candidate not in used_slots
                 ),
                 None,
@@ -1000,7 +1008,7 @@ def save_import_payload(body):
         if slot and generated_name:
             conn.execute(
                 "UPDATE villages SET name=? WHERE id=?",
-                (f"村庄{slot}", village_id),
+                (VILLAGE_SLOT_NAMES[slot], village_id),
             )
         for item in upgrades:
             if not isinstance(item, dict) or not item.get("name"):
@@ -1095,7 +1103,7 @@ def save_import_payload(body):
         "village_id": village_id,
         "village_name": str(village["name"]),
         "slot": slot,
-        "slot_name": f"村庄{slot}" if slot else "",
+        "slot_name": VILLAGE_SLOT_NAMES.get(slot, ""),
         "slot_new": slot_new,
         "player_tag": str(village.get("player_tag", "")),
         "imported": imported,
@@ -1144,7 +1152,8 @@ def process_wecom_menu_event(message):
         contents = [
             "📖 使用方法\n"
             "直接发送游戏导出的完整 JSON，无需提前选择村庄。\n"
-            "系统会根据 JSON 内的唯一标签自动识别村庄 A、B、C、D。\n"
+            "系统会根据 JSON 内的唯一标签自动识别 "
+            "sakura、shine、dizzy、erii。\n"
             "再次发送同一村庄的 JSON 会自动更新升级时间。"
         ]
     for content in contents:

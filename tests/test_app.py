@@ -156,6 +156,7 @@ def test_raw_game_export(module):
     assert response.json["imported"] == 4
     assert response.json["slot"] == "A"
     village = client.get("/api/v1/villages").json["villages"][0]
+    assert village["name"] == "sakura"
     assert village["player_tag"] == "#GG8QVU9UL"
     names = {upgrade["name"] for upgrade in village["upgrades"]}
     assert names == {"弹射加农炮", "气球兵", "弓箭女皇", "毒蜥"}
@@ -167,11 +168,17 @@ def test_raw_game_export(module):
     assert second_response.json["slot"] == "B"
     repeat_response = client.post("/api/v1/import", json=raw)
     assert repeat_response.json["slot"] == "A"
+    assert repeat_response.json["slot_name"] == "sakura"
     assert repeat_response.json["slot_new"] is False
+    villages = client.get("/api/v1/villages").json["villages"]
+    assert {village["name"]: village["player_tag"] for village in villages} == {
+        "sakura": "#GG8QVU9UL",
+        "shine": "#SECOND",
+    }
 
     menu = module.build_wecom_menu()
     village_menu = menu["button"][0]["sub_button"]
-    assert [button["name"] for button in village_menu] == ["村庄A", "村庄B"]
+    assert [button["name"] for button in village_menu] == ["sakura", "shine"]
     assert [button["key"] for button in village_menu] == [
         "COC_VILLAGE_A",
         "COC_VILLAGE_B",
@@ -416,7 +423,7 @@ def test_wecom_callback_verification_and_text_json_import(module, monkeypatch):
             "EventKey": "COC_VILLAGE_A",
         }
     )
-    assert "村庄A 升级进度" in replies[-1][1]
+    assert "sakura 升级进度" in replies[-1][1]
     assert "大本营 Lv14→15" in replies[-1][1]
 
     reply_count = len(replies)

@@ -21,7 +21,13 @@
 - 数据目录：`/volume1/docker/coc/data`
 - HTTP 代理：`http://192.168.31.129:7890`
 
-部署前必须修改 `API_KEY` 为随机长密码。如果 NAS 的共享文件夹路径或代理地址不同，也要一并修改。没有 HTTP 代理时，删除 `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` 和 `OUTBOUND_PROXY` 四行。
+部署前必须修改下面三项，不能保留示例值：
+
+- `ADMIN_PASSWORD`：网页后台登录密码；
+- `SESSION_SECRET`：随机长字符串，用于保护登录会话；
+- `API_KEY`：外部程序提交村庄 JSON 时使用的独立密钥。
+
+`ADMIN_USERNAME` 默认为 `admin`，也可以修改。如果 NAS 的共享文件夹路径或代理地址不同，也要一并修改。没有 HTTP 代理时，删除 `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` 和 `OUTBOUND_PROXY` 四行。
 
 命令行部署也可以直接执行：
 
@@ -30,7 +36,7 @@ docker compose pull
 docker compose up -d
 ```
 
-浏览器打开 `http://NAS-IP:802`，输入 Compose 中设置的 API Key，然后在“企业微信通知”中填写 CorpID、AgentID、Secret 和接收成员，最后点击“发送测试通知”。
+浏览器打开 `http://NAS-IP:802`，使用 Compose 中的 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 登录。然后在“企业微信通知”中填写 CorpID、AgentID、Secret 和接收成员，最后点击“发送测试通知”。
 
 网页中保存的通知配置和村庄数据都持久化在项目的 `data/` 目录，更新或重建容器不会丢失。`.env` 中的企业微信参数仍然可作为初始默认值；网页保存的设置优先。
 
@@ -48,7 +54,7 @@ https://coc.example.com/api/v1/import
 http://云服务器IPv4:映射端口/api/v1/import
 ```
 
-调用时通过请求头传入 `.env` 中的密钥：
+外部程序提交 JSON 时不需要登录网页，通过请求头传入 Compose 中单独设置的 `API_KEY`：
 
 ```bash
 curl -X POST 'https://coc.example.com/api/v1/import' \
@@ -153,4 +159,4 @@ curl -X POST 'https://coc.example.com/api/v1/import' \
 | `POST` | `/api/v1/notifications/check` | 立即检查到期项目 |
 | `GET` | `/health` | 健康检查 |
 
-除 `/health` 外，配置 `API_KEY` 后所有接口都必须发送 `X-API-Key` 请求头。
+网页后台通过账号密码和会话 Cookie 鉴权。外部程序可以在请求中发送 `X-API-Key`，因此自动提交村庄 JSON 不受网页登录状态影响。`/health` 保持公开，供 Docker 健康检查使用。

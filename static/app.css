@@ -21,6 +21,8 @@ body {
 }
 .shell { width: min(1040px, calc(100% - 32px)); margin: 0 auto; padding: 56px 0 80px; }
 header, .panel-title, .actions { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.header-actions { display: flex; align-items: center; gap: 10px; }
+.header-actions form { margin: 0; }
 h1 { margin: 4px 0 8px; font-size: clamp(30px, 5vw, 48px); letter-spacing: -1px; }
 h2 { margin: 0 0 7px; font-size: 20px; }
 p { margin: 0; }
@@ -73,9 +75,22 @@ button.secondary { background: #29262e; color: #d9d4dd; border: 1px solid #3b374
 .time.done { color: var(--green); }
 .delete { padding: 7px 10px; background: transparent; color: #77717d; border: 0; }
 .empty { padding: 35px 0; text-align: center; color: var(--muted); }
+.login-page { display: grid; place-items: center; padding: 24px; }
+.login-card {
+  width: min(440px, 100%); padding: 38px; background: rgba(28,26,32,.96);
+  border: 1px solid var(--line); border-radius: 24px; box-shadow: 0 24px 80px #0007;
+}
+.login-card h1 { margin-top: 8px; font-size: 32px; }
+.login-icon { display: grid; place-items: center; width: 58px; height: 58px; margin-bottom: 22px; border-radius: 18px; background: #34251f; font-size: 28px; }
+.login-form { display: grid; gap: 17px; margin-top: 28px; }
+.login-form label span { display: block; margin: 0 0 7px 3px; color: var(--muted); font-size: 13px; }
+.login-form input { max-width: none; }
+.login-form button { width: 100%; margin-top: 4px; padding: 13px; }
+.login-error { color: #ff6666; font-size: 14px; }
 @media (max-width: 640px) {
   .shell { padding-top: 30px; }
   header { align-items: flex-start; }
+  .header-actions { align-items: flex-end; flex-direction: column; }
   .stats { gap: 8px; }
   .stats article { padding: 15px; }
   .stats strong { font-size: 25px; }

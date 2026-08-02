@@ -6,6 +6,9 @@ services:
       TZ: Asia/Shanghai
       DATA_DIR: /data
       PORT: "8080"
+      ADMIN_USERNAME: "admin"
+      ADMIN_PASSWORD: "change-this-admin-password"
+      SESSION_SECRET: "change-this-to-another-long-random-string"
       API_KEY: "change-this-to-a-long-random-password"
       HTTP_PROXY: http://192.168.31.129:7890
       HTTPS_PROXY: http://192.168.31.129:7890

@@ -8,6 +8,7 @@ import pytest
 def module(tmp_path, monkeypatch):
     monkeypatch.setenv("DB_PATH", str(tmp_path / "test.db"))
     monkeypatch.setenv("DISABLE_SCHEDULER", "1")
+    monkeypatch.setenv("DISABLE_AUTH", "1")
     monkeypatch.delenv("API_KEY", raising=False)
     import app
 
@@ -155,3 +156,38 @@ def test_wecom_settings_are_persisted_and_secret_is_masked(module):
     )
     assert module.notifier.secret == "top-secret-value"
     assert module.notifier.corp_id == "ww-updated"
+
+
+def test_admin_login_and_api_key_access(module):
+    module.AUTH_DISABLED = False
+    module.ADMIN_USERNAME = "admin-test"
+    module.ADMIN_PASSWORD = "password-test"
+    module.API_KEY = "api-key-test"
+    client = module.app.test_client()
+
+    response = client.get("/")
+    assert response.status_code == 302
+    assert "/login" in response.headers["Location"]
+    assert client.get("/api/v1/villages").status_code == 401
+
+    wrong = client.post(
+        "/login",
+        data={"username": "admin-test", "password": "wrong"},
+    )
+    assert wrong.status_code == 200
+    assert "账号或密码错误" in wrong.get_data(as_text=True)
+
+    logged_in = client.post(
+        "/login",
+        data={"username": "admin-test", "password": "password-test"},
+    )
+    assert logged_in.status_code == 302
+    assert client.get("/api/v1/villages").status_code == 200
+
+    external_client = module.app.test_client()
+    imported = external_client.post(
+        "/api/v1/import",
+        json=payload(),
+        headers={"X-API-Key": "api-key-test"},
+    )
+    assert imported.status_code == 201

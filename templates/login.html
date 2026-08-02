@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>登录 · 部落冲突升级提醒</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="login-page">
+  <main class="login-card">
+    <div class="login-icon">🛡️</div>
+    <p class="eyebrow">CLASH OF CLANS</p>
+    <h1>登录提醒后台</h1>
+    <p class="sub">请输入 Docker Compose 中设置的管理员账号和密码。</p>
+    <form method="post" class="login-form">
+      <label><span>账号</span><input name="username" autocomplete="username" required autofocus></label>
+      <label><span>密码</span><input name="password" type="password" autocomplete="current-password" required></label>
+      {% if error %}<p class="login-error">{{ error }}</p>{% endif %}
+      <button type="submit">登录后台</button>
+    </form>
+  </main>
+</body>
+</html>

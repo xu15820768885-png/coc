@@ -1,5 +1,6 @@
 import json
 import os
+import secrets
 import sqlite3
 import threading
 import time
@@ -9,7 +10,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import requests
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 from game_data import EXPORT_SECTIONS, item_name
 
 
@@ -18,9 +19,18 @@ DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
 DB_PATH = Path(os.getenv("DB_PATH", str(DATA_DIR / "coc-reminder.db")))
 CHECK_INTERVAL = max(5, int(os.getenv("CHECK_INTERVAL_SECONDS", "30")))
 API_KEY = os.getenv("API_KEY", "").strip()
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin").strip()
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "change-me")
+AUTH_DISABLED = os.getenv("DISABLE_AUTH", "0") == "1"
 
 app = Flask(__name__)
 app.json.ensure_ascii = False
+app.secret_key = os.getenv("SESSION_SECRET", "change-this-session-secret")
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+)
 
 
 def now_utc():
@@ -87,13 +97,13 @@ def init_db():
         )
 
 
-def require_api_key():
-    if not API_KEY:
+def require_access():
+    if AUTH_DISABLED or session.get("authenticated"):
         return None
     supplied = request.headers.get("X-API-Key") or request.args.get("api_key", "")
-    if supplied != API_KEY:
-        return jsonify({"ok": False, "error": "API key 无效"}), 401
-    return None
+    if API_KEY and secrets.compare_digest(supplied, API_KEY):
+        return None
+    return jsonify({"ok": False, "error": "请先登录后台或提供有效的 API Key"}), 401
 
 
 def row_to_upgrade(row):
@@ -311,7 +321,35 @@ def scheduler_loop():
 
 @app.get("/")
 def index():
+    if not AUTH_DISABLED and not session.get("authenticated"):
+        return redirect(url_for("login"))
     return render_template("index.html")
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if AUTH_DISABLED or session.get("authenticated"):
+        return redirect(url_for("index"))
+    error = ""
+    if request.method == "POST":
+        username = request.form.get("username", "")
+        password = request.form.get("password", "")
+        valid_user = secrets.compare_digest(username, ADMIN_USERNAME)
+        valid_password = secrets.compare_digest(password, ADMIN_PASSWORD)
+        if valid_user and valid_password:
+            session.clear()
+            session["authenticated"] = True
+            session["username"] = ADMIN_USERNAME
+            session.permanent = True
+            return redirect(url_for("index"))
+        error = "账号或密码错误"
+    return render_template("login.html", error=error)
+
+
+@app.post("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
 
 
 @app.get("/health")
@@ -327,7 +365,7 @@ def health():
 
 @app.get("/api/v1/villages")
 def list_villages():
-    auth = require_api_key()
+    auth = require_access()
     if auth:
         return auth
     with get_db() as conn:
@@ -343,7 +381,7 @@ def list_villages():
 
 @app.get("/api/v1/settings/wecom")
 def get_wecom_settings():
-    auth = require_api_key()
+    auth = require_access()
     if auth:
         return auth
     return jsonify(
@@ -365,7 +403,7 @@ def get_wecom_settings():
 
 @app.put("/api/v1/settings/wecom")
 def update_wecom_settings():
-    auth = require_api_key()
+    auth = require_access()
     if auth:
         return auth
     body = request.get_json(silent=True)
@@ -416,7 +454,7 @@ def update_wecom_settings():
 
 @app.post("/api/v1/import")
 def import_village():
-    auth = require_api_key()
+    auth = require_access()
     if auth:
         return auth
     body = request.get_json(silent=True)
@@ -536,7 +574,7 @@ def import_village():
 
 @app.delete("/api/v1/upgrades/<upgrade_id>")
 def delete_upgrade(upgrade_id):
-    auth = require_api_key()
+    auth = require_access()
     if auth:
         return auth
     with get_db() as conn:
@@ -548,7 +586,7 @@ def delete_upgrade(upgrade_id):
 
 @app.post("/api/v1/notifications/test")
 def test_notification():
-    auth = require_api_key()
+    auth = require_access()
     if auth:
         return auth
     try:
@@ -563,7 +601,7 @@ def test_notification():
 
 @app.post("/api/v1/notifications/check")
 def check_notifications():
-    auth = require_api_key()
+    auth = require_access()
     if auth:
         return auth
     return jsonify({"ok": True, "sent": process_due_upgrades()})

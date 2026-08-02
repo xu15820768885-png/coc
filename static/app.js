@@ -10,9 +10,7 @@ const example = {
 };
 
 function headers(json = false) {
-  const value = $("apiKey").value.trim() || localStorage.getItem("coc-api-key") || "";
-  if (value) localStorage.setItem("coc-api-key", value);
-  return { ...(json ? { "Content-Type": "application/json" } : {}), ...(value ? { "X-API-Key": value } : {}) };
+  return json ? { "Content-Type": "application/json" } : {};
 }
 
 async function api(path, options = {}) {
@@ -146,6 +144,5 @@ $("villages").onclick = async (event) => {
   catch (error) { feedback(error.message, true); }
 };
 
-$("apiKey").value = localStorage.getItem("coc-api-key") || "";
 Promise.all([loadSettings(), load()]);
 setInterval(load, 30000);

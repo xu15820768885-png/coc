@@ -14,7 +14,10 @@
         <h1>村庄升级提醒</h1>
         <p class="sub">导入村庄 JSON，升级完成后自动发送企业微信通知。</p>
       </div>
-      <div id="wecomBadge" class="badge">检测中</div>
+      <div class="header-actions">
+        <div id="wecomBadge" class="badge">检测中</div>
+        <form method="post" action="/logout"><button class="secondary" type="submit">退出登录</button></form>
+      </div>
     </header>
 
     <section class="stats">
@@ -36,7 +39,6 @@
         <label class="wide"><span>云服务器 HTTP 出站代理（可选）</span><input id="outboundProxy" placeholder="http://user:pass@服务器IP:端口"></label>
       </div>
       <div class="actions settings-actions">
-        <input id="apiKey" type="password" placeholder="后台 API Key（如已配置）">
         <button id="saveSettingsBtn">保存通知设置</button>
         <button class="secondary" id="testBtn">发送测试通知</button>
       </div>

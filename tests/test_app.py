@@ -235,9 +235,9 @@ def test_raw_game_export_includes_crafted_defense_module_timers(module):
     assert response.status_code == 201
     assert response.json["imported"] == 3
     assert [item["name"] for item in response.json["upgrades"]] == [
-        "英雄猎手·模组1",
-        "热蜡烛·模组3",
-        "蛋糕投石器·模组3",
+        "英雄猎台·模组1",
+        "火热蜡烛·模组3",
+        "蛋糕投掷器·模组3",
     ]
     assert all(
         item["category"] == "精工防御"

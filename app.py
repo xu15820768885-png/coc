@@ -135,6 +135,12 @@ def init_db():
               from_user TEXT NOT NULL,
               received_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS village_slots (
+              village_id TEXT PRIMARY KEY,
+              slot TEXT NOT NULL UNIQUE,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY(village_id) REFERENCES villages(id)
+            );
             """
         )
         upgrade_columns = {
@@ -148,6 +154,40 @@ def init_db():
             conn.execute(
                 "ALTER TABLE upgrades ADD COLUMN half_hour_notified_at TEXT"
             )
+        assigned = {
+            row["village_id"]
+            for row in conn.execute("SELECT village_id FROM village_slots")
+        }
+        used_slots = {
+            row["slot"] for row in conn.execute("SELECT slot FROM village_slots")
+        }
+        available_slots = [
+            slot for slot in ("A", "B", "C", "D") if slot not in used_slots
+        ]
+        villages = conn.execute(
+            "SELECT id FROM villages ORDER BY updated_at, id"
+        ).fetchall()
+        for village in villages:
+            if village["id"] in assigned or not available_slots:
+                continue
+            conn.execute(
+                """
+                INSERT INTO village_slots(village_id, slot, created_at)
+                VALUES(?, ?, ?)
+                """,
+                (village["id"], available_slots.pop(0), iso_utc(now_utc())),
+            )
+        conn.execute(
+            """
+            UPDATE villages
+            SET name='村庄' || (
+              SELECT slot FROM village_slots
+              WHERE village_slots.village_id=villages.id
+            )
+            WHERE name='村庄 ' || player_tag
+              AND id IN (SELECT village_id FROM village_slots)
+            """
+        )
 
 
 def require_access():
@@ -326,6 +366,25 @@ class WeComNotifier:
             raise RuntimeError(f"下载企业微信文件失败：{payload}")
         return response.content
 
+    def create_menu(self, menu):
+        if not self.configured:
+            raise RuntimeError("尚未配置企业微信")
+        response = requests.post(
+            f"{self.base_url}/cgi-bin/menu/create",
+            params={
+                "access_token": self.token(),
+                "agentid": self.agent_id,
+            },
+            json=menu,
+            proxies=self.proxies,
+            timeout=15,
+        )
+        response.raise_for_status()
+        result = response.json()
+        if result.get("errcode") != 0:
+            raise RuntimeError(f"企业微信菜单创建失败：{result}")
+        return result
+
 
 class WeComCallbackCrypto:
     def __init__(self, token, encoding_aes_key, receive_id):
@@ -434,7 +493,7 @@ def compact_duration(seconds):
 
 
 def import_result_message(result):
-    village = result["village_name"]
+    village = result.get("slot_name") or result["village_name"]
     tag = result.get("player_tag", "")
     if tag and tag not in village:
         village = f"{village}（{tag}）"
@@ -461,6 +520,105 @@ def import_result_message(result):
         )
     lines.append("完成前 1 小时、30 分钟和完成时会自动通知。")
     return "\n".join(lines)
+
+
+def build_wecom_menu():
+    with get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT s.slot, s.village_id, v.player_tag
+            FROM village_slots s
+            JOIN villages v ON v.id = s.village_id
+            ORDER BY s.slot
+            """
+        ).fetchall()
+    if rows:
+        village_button = {
+            "name": "查看村庄",
+            "sub_button": [
+                {
+                    "type": "click",
+                    "name": f"村庄{row['slot']}",
+                    "key": f"COC_VILLAGE_{row['slot']}",
+                }
+                for row in rows
+            ],
+        }
+    else:
+        village_button = {
+            "type": "click",
+            "name": "查看村庄",
+            "key": "COC_HELP",
+        }
+    return {
+        "button": [
+            village_button,
+            {"type": "click", "name": "全部进度", "key": "COC_ALL"},
+            {"type": "click", "name": "使用帮助", "key": "COC_HELP"},
+        ]
+    }
+
+
+def village_progress_messages(slot=None):
+    with get_db() as conn:
+        parameters = []
+        where = ""
+        if slot:
+            where = "WHERE s.slot=?"
+            parameters.append(slot)
+        villages = conn.execute(
+            f"""
+            SELECT s.slot, v.*
+            FROM village_slots s
+            JOIN villages v ON v.id = s.village_id
+            {where}
+            ORDER BY s.slot
+            """,
+            parameters,
+        ).fetchall()
+        messages = []
+        for village in villages:
+            upgrades = conn.execute(
+                """
+                SELECT name, level_from, level_to, ends_at
+                FROM upgrades
+                WHERE village_id=? AND status='upgrading' AND notified_at IS NULL
+                ORDER BY ends_at
+                """,
+                (village["id"],),
+            ).fetchall()
+            tag = village["player_tag"] or village["id"]
+            lines = [
+                f"🏡 村庄{village['slot']} 升级进度",
+                f"标签：{tag}",
+                f"进行中项目：{len(upgrades)} 个",
+            ]
+            for index, upgrade in enumerate(upgrades, start=1):
+                level = (
+                    f" Lv{upgrade['level_from']}→{upgrade['level_to']}"
+                    if upgrade["level_from"] is not None
+                    and upgrade["level_to"] is not None
+                    else ""
+                )
+                end = parse_time(upgrade["ends_at"])
+                remaining = compact_duration((end - now_utc()).total_seconds())
+                finished = end.astimezone(APP_TZ).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+                lines.extend(
+                    [
+                        f"{index}. {upgrade['name']}{level}",
+                        f"   剩余 {remaining}｜北京时间 {finished}",
+                    ]
+                )
+            if not upgrades:
+                lines.append("当前没有进行中的升级。")
+            messages.append("\n".join(lines))
+    if slot and not messages:
+        return [f"尚未绑定村庄{slot}，直接发送该村庄的 JSON 即可自动绑定。"]
+    if not messages:
+        return ["尚未导入村庄。直接发送游戏 JSON，系统会自动识别并绑定。"]
+    return messages
 
 
 def process_due_upgrades():
@@ -767,6 +925,18 @@ def update_wecom_settings():
     return jsonify({"ok": True, "configured": notifier.configured})
 
 
+@app.post("/api/v1/settings/wecom/menu")
+def create_wecom_menu():
+    auth = require_access()
+    if auth:
+        return auth
+    try:
+        result = notifier.create_menu(build_wecom_menu())
+        return jsonify({"ok": True, "result": result})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 502
+
+
 def save_import_payload(body):
     if not isinstance(body, dict):
         raise ValueError("请求体必须是 JSON 对象")
@@ -782,6 +952,8 @@ def save_import_payload(body):
     imported = 0
     imported_ids = []
     imported_upgrades = []
+    slot = None
+    slot_new = False
     current = now_utc()
     current_iso = iso_utc(current)
     with get_db() as conn:
@@ -793,6 +965,43 @@ def save_import_payload(body):
             """,
             (village_id, str(village["name"]), str(village.get("player_tag", "")), current_iso),
         )
+        slot_row = conn.execute(
+            "SELECT slot FROM village_slots WHERE village_id=?",
+            (village_id,),
+        ).fetchone()
+        if slot_row:
+            slot = slot_row["slot"]
+        else:
+            used_slots = {
+                row["slot"]
+                for row in conn.execute("SELECT slot FROM village_slots")
+            }
+            slot = next(
+                (
+                    candidate
+                    for candidate in ("A", "B", "C", "D")
+                    if candidate not in used_slots
+                ),
+                None,
+            )
+            if slot:
+                conn.execute(
+                    """
+                    INSERT INTO village_slots(village_id, slot, created_at)
+                    VALUES(?, ?, ?)
+                    """,
+                    (village_id, slot, current_iso),
+                )
+                slot_new = True
+        generated_name = str(village["name"]) in {
+            f"村庄 {village_id}",
+            f"村庄 {village.get('player_tag', '')}",
+        }
+        if slot and generated_name:
+            conn.execute(
+                "UPDATE villages SET name=? WHERE id=?",
+                (f"村庄{slot}", village_id),
+            )
         for item in upgrades:
             if not isinstance(item, dict) or not item.get("name"):
                 raise ValueError("每个升级项目都必须包含 name")
@@ -885,6 +1094,9 @@ def save_import_payload(body):
         "ok": True,
         "village_id": village_id,
         "village_name": str(village["name"]),
+        "slot": slot,
+        "slot_name": f"村庄{slot}" if slot else "",
+        "slot_new": slot_new,
         "player_tag": str(village.get("player_tag", "")),
         "imported": imported,
         "upgrades": sorted(imported_upgrades, key=lambda item: item["ends_at"]),
@@ -916,10 +1128,36 @@ def send_wecom_import_result(from_user, content):
         app.logger.exception("发送企业微信 JSON 导入结果失败")
 
 
+def process_wecom_menu_event(message):
+    from_user = message.get("FromUserName", "")
+    event = message.get("Event", "").lower()
+    key = message.get("EventKey", "")
+    if event != "click":
+        return
+    if key.startswith("COC_VILLAGE_"):
+        contents = village_progress_messages(
+            key.removeprefix("COC_VILLAGE_")
+        )
+    elif key == "COC_ALL":
+        contents = village_progress_messages()
+    else:
+        contents = [
+            "📖 使用方法\n"
+            "直接发送游戏导出的完整 JSON，无需提前选择村庄。\n"
+            "系统会根据 JSON 内的唯一标签自动识别村庄 A、B、C、D。\n"
+            "再次发送同一村庄的 JSON 会自动更新升级时间。"
+        ]
+    for content in contents:
+        send_wecom_import_result(from_user, content)
+
+
 def process_wecom_incoming_message(message):
     from_user = message.get("FromUserName", "")
     try:
         msg_type = message.get("MsgType", "")
+        if msg_type == "event":
+            process_wecom_menu_event(message)
+            return
         if msg_type == "text":
             raw_json = message.get("Content", "").strip()
         elif msg_type == "file":
@@ -934,6 +1172,11 @@ def process_wecom_incoming_message(message):
             raise ValueError("请发送村庄 JSON 文本，或发送 .json 文件")
         payload = json.loads(raw_json)
         result = save_import_payload(payload)
+        if result.get("slot_new"):
+            try:
+                notifier.create_menu(build_wecom_menu())
+            except Exception:
+                app.logger.exception("自动刷新企业微信村庄菜单失败")
         send_wecom_import_result(
             from_user,
             import_result_message(result),
@@ -970,6 +1213,8 @@ def wecom_callback():
                 + message.get("CreateTime", "")
                 + ":"
                 + message.get("MsgType", "")
+                + ":"
+                + message.get("EventKey", "")
             ).encode("utf-8")
         ).hexdigest()
         with get_db() as conn:

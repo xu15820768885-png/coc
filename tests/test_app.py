@@ -154,12 +154,28 @@ def test_raw_game_export(module):
     assert response.status_code == 201
     assert response.json["format"] == "game_export"
     assert response.json["imported"] == 4
+    assert response.json["slot"] == "A"
     village = client.get("/api/v1/villages").json["villages"][0]
     assert village["player_tag"] == "#GG8QVU9UL"
     names = {upgrade["name"] for upgrade in village["upgrades"]}
     assert names == {"弹射加农炮", "气球兵", "弓箭女皇", "毒蜥"}
     assert all(upgrade["level_to"] == upgrade["level_from"] + 1 for upgrade in village["upgrades"])
     assert all("助手" not in upgrade["name"] for upgrade in village["upgrades"])
+
+    second = {**raw, "tag": "#SECOND", "buildings": [], "units": []}
+    second_response = client.post("/api/v1/import", json=second)
+    assert second_response.json["slot"] == "B"
+    repeat_response = client.post("/api/v1/import", json=raw)
+    assert repeat_response.json["slot"] == "A"
+    assert repeat_response.json["slot_new"] is False
+
+    menu = module.build_wecom_menu()
+    village_menu = menu["button"][0]["sub_button"]
+    assert [button["name"] for button in village_menu] == ["村庄A", "村庄B"]
+    assert [button["key"] for button in village_menu] == [
+        "COC_VILLAGE_A",
+        "COC_VILLAGE_B",
+    ]
 
 
 def test_new_raw_snapshot_makes_missing_upgrade_due(module):
@@ -344,6 +360,11 @@ def test_wecom_callback_verification_and_text_json_import(module, monkeypatch):
         lambda content, to_user=None: replies.append((to_user, content))
         or {"errcode": 0},
     )
+    monkeypatch.setattr(
+        module.notifier,
+        "create_menu",
+        lambda menu: {"errcode": 0, "menu": menu},
+    )
 
     class ImmediateThread:
         def __init__(self, target, args=(), **kwargs):
@@ -386,6 +407,17 @@ def test_wecom_callback_verification_and_text_json_import(module, monkeypatch):
     assert "1. 大本营 Lv14→15" in import_reply[1]
     assert "剩余" in import_reply[1]
     assert "北京时间" in import_reply[1]
+
+    module.process_wecom_incoming_message(
+        {
+            "FromUserName": "zhangsan",
+            "MsgType": "event",
+            "Event": "click",
+            "EventKey": "COC_VILLAGE_A",
+        }
+    )
+    assert "村庄A 升级进度" in replies[-1][1]
+    assert "大本营 Lv14→15" in replies[-1][1]
 
     reply_count = len(replies)
     duplicate = client.post(

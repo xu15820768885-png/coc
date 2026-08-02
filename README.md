@@ -92,6 +92,9 @@ https://coc.weige1999.xin/api/v1/wecom/callback
 3. 回到企业微信管理后台，URL 填上面的回调地址，Token 和 EncodingAESKey 保持完全一致，然后保存。
 4. 在企业微信里打开该应用，直接粘贴并发送游戏导出的完整 JSON 文本。
 5. Docker 解密消息并导入后，会回复建筑名称、等级、剩余时间和预计完成的北京时间；随后在完成前 1 小时、30 分钟及完成时自动通知。
+6. 在 COC 网页后台点击“创建/刷新微信菜单”，重新进入企业微信中的 COC 应用后即可看到“查看村庄、全部进度、使用帮助”菜单。
+
+最多四个常用村庄会按首次导入顺序自动显示为村庄 A、B、C、D。发送 JSON 前不需要选择村庄：服务直接读取 JSON 中的唯一 `tag`，相同标签自动更新原村庄，新标签自动绑定到下一个空位。点击菜单中的村庄 A/B/C/D 只用于查询对应进度，不会改变后续 JSON 的归属。
 
 企业微信回调会重试消息，服务使用 `MsgId` 去重，同一条消息不会重复导入。
 
@@ -178,6 +181,7 @@ https://coc.weige1999.xin/api/v1/wecom/callback
 | `POST` | `/api/v1/import` | 导入或更新村庄升级数据 |
 | `GET` | `/api/v1/villages` | 查询所有村庄和升级状态 |
 | `GET/PUT` | `/api/v1/settings/wecom` | 查看或保存企业微信通知设置 |
+| `POST` | `/api/v1/settings/wecom/menu` | 创建或刷新企业微信应用菜单 |
 | `DELETE` | `/api/v1/upgrades/{id}` | 删除升级项目 |
 | `POST` | `/api/v1/notifications/test` | 发送企业微信测试消息 |
 | `POST` | `/api/v1/notifications/check` | 立即检查到期项目 |

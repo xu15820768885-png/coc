@@ -144,6 +144,17 @@ $("testBtn").onclick = async () => {
     $("testBtn").disabled = false;
   }
 };
+$("menuBtn").onclick = async () => {
+  try {
+    $("menuBtn").disabled = true;
+    await api("/api/v1/settings/wecom/menu", { method: "POST" });
+    settingsFeedback("企业微信菜单已创建/刷新，请重新进入 COC 应用查看");
+  } catch (error) {
+    settingsFeedback(error.message, true);
+  } finally {
+    $("menuBtn").disabled = false;
+  }
+};
 $("villages").onclick = async (event) => {
   const id = event.target.dataset.delete;
   if (!id || !confirm("删除这个升级提醒？")) return;

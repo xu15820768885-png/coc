@@ -19,7 +19,6 @@
 - 镜像：`ghcr.mirrorify.net/xu15820768885-png/coc:latest`
 - 访问端口：`802`
 - 数据目录：`/volume1/docker/coc/data`
-- HTTP 代理：`http://192.168.31.129:7890`
 
 部署前必须修改下面三项，不能保留示例值：
 
@@ -27,7 +26,7 @@
 - `SESSION_SECRET`：随机长字符串，用于保护登录会话；
 - `API_KEY`：外部程序提交村庄 JSON 时使用的独立密钥。
 
-`ADMIN_USERNAME` 默认为 `admin`，也可以修改。如果 NAS 的共享文件夹路径或代理地址不同，也要一并修改。没有 HTTP 代理时，删除 `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` 和 `OUTBOUND_PROXY` 四行。
+`ADMIN_USERNAME` 默认为 `admin`，也可以修改。如果 NAS 的共享文件夹路径不同，也要一并修改。默认不使用代理；只有企业微信要求特定出口 IP 时，才需要在网页后台填写 API 转发地址或 HTTP 出站代理。
 
 命令行部署也可以直接执行：
 

@@ -478,6 +478,8 @@ def test_wecom_callback_verification_and_text_json_import(module, monkeypatch):
     assert "1. 大本营 Lv14→15" in import_reply[1]
     assert "剩余" in import_reply[1]
     assert "北京时间" in import_reply[1]
+    assert "建筑升级完成时会自动通知" in import_reply[1]
+    assert "完成前" not in import_reply[1]
 
     module.process_wecom_incoming_message(
         {

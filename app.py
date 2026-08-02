@@ -544,7 +544,7 @@ def import_result_message(result):
                 f"   剩余 {remaining}｜北京时间 {finished}",
             ]
         )
-    lines.append("完成前 1 小时、30 分钟和完成时会自动通知。")
+    lines.append("建筑升级完成时会自动通知。")
     return "\n".join(lines)
 
 

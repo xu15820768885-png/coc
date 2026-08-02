@@ -1,0 +1,20 @@
+services:
+  coc-reminder:
+    build: .
+    image: coc-reminder:latest
+    container_name: coc-reminder
+    restart: unless-stopped
+    ports:
+      - "802:8080"
+    environment:
+      TZ: Asia/Shanghai
+      API_KEY: ${API_KEY:-}
+      WECOM_CORP_ID: ${WECOM_CORP_ID}
+      WECOM_AGENT_ID: ${WECOM_AGENT_ID}
+      WECOM_SECRET: ${WECOM_SECRET}
+      WECOM_TO_USER: ${WECOM_TO_USER:-@all}
+      WECOM_API_BASE: ${WECOM_API_BASE:-https://qyapi.weixin.qq.com}
+      OUTBOUND_PROXY: ${OUTBOUND_PROXY:-}
+      CHECK_INTERVAL_SECONDS: 30
+    volumes:
+      - ./data:/data

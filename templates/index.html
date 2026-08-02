@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>部落冲突升级提醒</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div>
+        <p class="eyebrow">CLASH OF CLANS</p>
+        <h1>村庄升级提醒</h1>
+        <p class="sub">导入村庄 JSON，升级完成后自动发送企业微信通知。</p>
+      </div>
+      <div id="wecomBadge" class="badge">检测中</div>
+    </header>
+
+    <section class="stats">
+      <article><span>村庄</span><strong id="villageCount">0</strong></article>
+      <article><span>升级中</span><strong id="activeCount">0</strong></article>
+      <article><span>已完成</span><strong id="doneCount">0</strong></article>
+    </section>
+
+    <section class="panel import-panel">
+      <div class="panel-title">
+        <div><h2>导入村庄数据</h2><p>粘贴 JSON 后保存，相同 ID 会自动更新。</p></div>
+        <button class="secondary" id="exampleBtn">填入示例</button>
+      </div>
+      <textarea id="jsonInput" spellcheck="false" placeholder='{"village": {...}, "upgrades": [...]}'></textarea>
+      <div class="actions">
+        <input id="apiKey" type="password" placeholder="API Key（如已配置）">
+        <button id="importBtn">保存并开始提醒</button>
+        <button class="secondary" id="testBtn">发送测试通知</button>
+      </div>
+      <p id="feedback" class="feedback"></p>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title">
+        <div><h2>升级队列</h2><p>页面每 30 秒自动刷新倒计时。</p></div>
+        <button class="secondary" id="refreshBtn">刷新</button>
+      </div>
+      <div id="villages" class="villages"><div class="empty">尚未导入村庄数据</div></div>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

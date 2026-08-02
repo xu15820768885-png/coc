@@ -107,7 +107,7 @@ https://coc.weige1999.xin/api/v1/wecom/callback
 - 使用 `tag` 作为村庄唯一标识；
 - 使用 `timestamp + timer` 计算准确完成时间；
 - 只导入 `buildings`、`traps`、`heroes`、`units`、`spells`、`siege_machines`、`pets` 等数组中带 `timer` 的进行中项目；
-- 识别 `buildings → types → modules → timer` 中嵌套的精工防御模组升级；
+- 识别 `buildings → types → modules → timer` 中嵌套的精工防御升级，消息只显示精工建筑名称；
 - 自动把游戏数据 ID 转为中文名称；
 - 忽略 `helper_cooldown`，因为它是助手工作日冷却，不是升级完成时间。
 - 后续提交的新快照视为该村庄的最新状态；旧快照中存在、但新快照已经消失的升级会立即作为完成项目处理并只通知一次。

@@ -488,17 +488,16 @@ def completion_message(upgrade):
         .strftime("%Y-%m-%d %H:%M:%S")
     )
     level = (
-        f" Lv{upgrade['level_from']}→{upgrade['level_to']}"
+        f"Lv{upgrade['level_from']} → Lv{upgrade['level_to']}"
         if upgrade["level_from"] is not None and upgrade["level_to"] is not None
-        else ""
+        else "未知"
     )
-    tag = f"（{upgrade['player_tag']}）" if upgrade["player_tag"] else ""
     return (
-        "✅ 部落冲突升级完成\n"
-        f"村庄：{upgrade['village_name']}{tag}\n"
-        f"项目：{upgrade['name']}{level}\n"
-        f"分类：{upgrade['category']}\n"
-        f"完成时间（北京时间）：{finished}"
+        "✅ 建筑升级完成\n\n"
+        f"村庄：{upgrade['village_name']}\n"
+        f"建筑：{upgrade['name']}\n"
+        f"等级：{level}\n"
+        f"完成时间：{finished}（北京时间）"
     )
 
 
@@ -509,18 +508,17 @@ def advance_message(upgrade, minutes):
         .strftime("%Y-%m-%d %H:%M:%S")
     )
     level = (
-        f" Lv{upgrade['level_from']}→{upgrade['level_to']}"
+        f"Lv{upgrade['level_from']} → Lv{upgrade['level_to']}"
         if upgrade["level_from"] is not None and upgrade["level_to"] is not None
-        else ""
+        else "未知"
     )
-    tag = f"（{upgrade['player_tag']}）" if upgrade["player_tag"] else ""
-    lead = "1 小时" if minutes == 60 else "30 分钟"
     return (
-        f"⏰ 距离升级完成还有 {lead}\n"
-        f"村庄：{upgrade['village_name']}{tag}\n"
-        f"项目：{upgrade['name']}{level}\n"
-        f"分类：{upgrade['category']}\n"
-        f"预计完成（北京时间）：{finished}"
+        "⏰ 建筑即将升级完成\n\n"
+        f"村庄：{upgrade['village_name']}\n"
+        f"建筑：{upgrade['name']}\n"
+        f"等级：{level}\n"
+        f"预计完成：{finished}（北京时间）\n"
+        f"剩余时间：{minutes}分钟"
     )
 
 
@@ -695,11 +693,6 @@ def process_due_upgrades():
             and row["half_hour_notified_at"] is None
         ):
             stage = "half_hour"
-        elif (
-            end <= current_time + timedelta(hours=1)
-            and row["one_hour_notified_at"] is None
-        ):
-            stage = "one_hour"
         else:
             continue
         try:
@@ -707,8 +700,6 @@ def process_due_upgrades():
                 message = completion_message(row)
             elif stage == "half_hour":
                 message = advance_message(row, 30)
-            else:
-                message = advance_message(row, 60)
             notifier.send_text(message)
             with get_db() as conn:
                 if stage == "completed":
@@ -738,15 +729,6 @@ def process_due_upgrades():
                         """,
                         (current, current, current, row["id"]),
                     )
-                else:
-                    conn.execute(
-                        """
-                        UPDATE upgrades
-                        SET one_hour_notified_at=?, updated_at=?
-                        WHERE id=? AND one_hour_notified_at IS NULL
-                        """,
-                        (current, current, row["id"]),
-                    )
             sent += 1
         except Exception:
             app.logger.exception("发送升级提醒失败：%s %s", row["id"], stage)
@@ -759,7 +741,7 @@ def seconds_until_next_upgrade():
     with get_db() as conn:
         rows = conn.execute(
             """
-            SELECT ends_at, one_hour_notified_at, half_hour_notified_at
+            SELECT ends_at, half_hour_notified_at
             FROM upgrades
             WHERE status = 'upgrading' AND notified_at IS NULL
             """
@@ -769,9 +751,7 @@ def seconds_until_next_upgrade():
     deadlines = []
     for row in rows:
         end = parse_time(row["ends_at"])
-        if row["one_hour_notified_at"] is None:
-            deadlines.append(end - timedelta(hours=1))
-        elif row["half_hour_notified_at"] is None:
+        if row["half_hour_notified_at"] is None:
             deadlines.append(end - timedelta(minutes=30))
         else:
             deadlines.append(end)

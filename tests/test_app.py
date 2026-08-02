@@ -93,7 +93,8 @@ def test_due_upgrade_sends_once(module, monkeypatch):
     monkeypatch.setattr(module.notifier, "send_text", lambda message: sent.append(message) or {"errcode": 0})
     assert module.process_due_upgrades() == 1
     assert module.process_due_upgrades() == 0
-    assert "大本营 Lv14→15" in sent[0]
+    assert "建筑：大本营" in sent[0]
+    assert "等级：Lv14 → Lv15" in sent[0]
 
 
 def test_sends_one_hour_half_hour_and_completion(module, monkeypatch):
@@ -113,20 +114,24 @@ def test_sends_one_hour_half_hour_and_completion(module, monkeypatch):
         lambda message: sent.append(message) or {"errcode": 0},
     )
 
-    assert module.process_due_upgrades() == 1
-    assert "还有 1 小时" in sent[-1]
-    assert "北京时间" in sent[-1]
     assert module.process_due_upgrades() == 0
+    assert sent == []
 
     clock[0] = end - timedelta(minutes=30)
     assert module.process_due_upgrades() == 1
-    assert "还有 30 分钟" in sent[-1]
+    assert "建筑即将升级完成" in sent[-1]
+    assert "剩余时间：30分钟" in sent[-1]
+    assert "村庄：测试村庄" in sent[-1]
+    assert "建筑：大本营" in sent[-1]
+    assert "等级：Lv14 → Lv15" in sent[-1]
+    assert "（北京时间）" in sent[-1]
     assert module.process_due_upgrades() == 0
 
     clock[0] = end
     assert module.process_due_upgrades() == 1
-    assert "升级完成" in sent[-1]
-    assert "北京时间" in sent[-1]
+    assert "✅ 建筑升级完成" in sent[-1]
+    assert "完成时间：" in sent[-1]
+    assert "（北京时间）" in sent[-1]
     assert module.process_due_upgrades() == 0
 
 
@@ -235,9 +240,9 @@ def test_raw_game_export_includes_crafted_defense_module_timers(module):
     assert response.status_code == 201
     assert response.json["imported"] == 3
     assert [item["name"] for item in response.json["upgrades"]] == [
-        "英雄猎台·模组1",
-        "火热蜡烛·模组3",
-        "蛋糕投掷器·模组3",
+        "英雄猎台",
+        "火热蜡烛",
+        "蛋糕投掷器",
     ]
     assert all(
         item["category"] == "精工防御"
@@ -353,7 +358,7 @@ def test_scheduler_waits_until_exact_reminder_time(module, monkeypatch):
     monkeypatch.setattr(module.WeComNotifier, "configured", property(lambda self: True))
 
     delay = module.seconds_until_next_upgrade()
-    assert 3500 <= delay <= 3600
+    assert 5300 <= delay <= 5400
 
     with module.get_db() as conn:
         conn.execute(

@@ -180,4 +180,4 @@ def crafted_module_name(defense_id, module_index):
     defense_name = CRAFTED_DEFENSE_NAMES.get(
         defense_id, f"精工防御 #{defense_id}"
     )
-    return f"{defense_name}·模组{module_index}"
+    return defense_name
